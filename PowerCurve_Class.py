@@ -8,6 +8,7 @@ from typing import Union, Tuple
 from Ploting.fast_plot_Func import series, scatter, vlines
 from project_path_Var import project_path_
 from scipy.io import loadmat
+import pandas as pd
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -149,3 +150,18 @@ class PowerCurveByMethodOfBins(PowerCurve):
         ax = scatter(self.wind_speed_recording, self.active_power_output_recording,
                      alpha=0.1) if plot_recording else None
         return super().plot_power_curve(ws, plot_region_boundary, ax)
+
+
+def make_mfr_pc_metadata():
+    """
+    生成初始化PowerCurveByMfr必须要有的元数据，包括mfr_ws和mfr_p。
+    数据会以pd.DataFrame的形式储存，行索引是WS [m/s]，int类型
+    列名是air density [kg/m^3], str类型，
+    元素是Pout [W]，float类型
+    :return: None
+    """
+    metadata = 1
+
+
+if __name__ == '__main__':
+    make_mfr_pc_metadata()

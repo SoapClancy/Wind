@@ -36,7 +36,7 @@ class WT:
     __slots__ = ('name', 'measurements', 'outlier_category', 'outlier_category_detailed')
     """
     name: WT的名字
-    measurements: 一个pd.DataFrame，包含同步测量的数据，DataFrame.columns包含:
+    measurements: 一个pd.DataFrame，包含同步测量的数据，DataFrame.columns，可选包含:
         'time',
         'wind speed',
         'wind speed std.',
@@ -51,11 +51,14 @@ class WT:
     def __init__(self, *, name: str, measurements: pd.DataFrame,
                  outlier_category: ndarray = None, outlier_category_detailed: pd.DataFrame = None):
         self.name = name
+        # TODO TSE paper: type(measurements)的改成TimeSeries
         self.measurements = measurements
-        self.outlier_category = outlier_category
+        # TODO TSE paper: outlier的属性可以单独再另一个函数中初始化，用load_exist_pkl_file_otherwise_run_and_save装饰器
+        self.outlier_category = outlier_category or np.zeros(measurements.shape[0])
         self.outlier_category_detailed = outlier_category_detailed
-        if any((self.outlier_category is None, self.outlier_category_detailed is None)):
-            self.identify_outlier()
+        # TODO This outlier part will be finished in the TSE paper
+        # if any((self.outlier_category is None, self.outlier_category_detailed is None)):
+        #     self.identify_outlier()
 
     def get_current_season(self, season_template: Enum = SeasonTemplate1) -> tuple:
         synchronous = SynchronousTimeSeriesData(self.measurements,
@@ -270,17 +273,20 @@ class WT:
             #      gmcm_fitting_attempt=1,
             #      )
 
-    def fit_2d_conditional_probability_model_by_gmm(self, *, bin_step: float, **kwargs):
-        path_ = self.results_path + '2d_conditional_probability_by_gmm/' + self.__str__() + \
-                ' bin_step={}/'.format(bin_step)
-        try_to_find_path_otherwise_make_one(path_)
+    def fit_2d_conditional_probability_model_by_gmm(self, *, bin_step: float, gmm_args: dict = None, **kwargs):
+        gmm_args = gmm_args or {}
+        _path = kwargs.get('_path') or (self.results_path + '2d_conditional_probability_by_gmm/' + self.__str__() + \
+                                        f' bin_step={bin_step}/')
+
+        try_to_find_path_otherwise_make_one(_path)
         bivariate = Bivariate(self.measurements['wind speed'].values[self.outlier_category == 0],
                               self.measurements['active power output'].values[self.outlier_category == 0],
                               bin_step=bin_step)
 
-        @load_exist_pkl_file_otherwise_run_and_save(path_ + 'model.pkl')
+        # TODO 全部换成Path类
+        @load_exist_pkl_file_otherwise_run_and_save(_path + (kwargs.get('model_name') or 'model.pkl'))
         def load_or_make():
-            return bivariate.fit_mob_using_gaussian_mixture_model(**kwargs)
+            return bivariate.fit_mob_using_gaussian_mixture_model(**gmm_args)
 
     def estimate_active_power_output_by_2d_conditional_probability_model_by_gmm(self,
                                                                                 wind_speed_ndarray: ndarray,
