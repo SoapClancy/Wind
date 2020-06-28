@@ -744,7 +744,7 @@ def plot_empirical_as_eg(full_this_wind_turbine: WT, years: int = 2):
                                    ), axis=1), axis=1)
     hist_pout = specific_this_wind_turbine.measurements['active power output'].values[select_flag]
     ax = hist(hist_pout / 3000, normed=True, label='Measurements')
-    mfr = PowerCurveByMfr().cal_active_power_output_according_to_wind_speed(11.75)
+    mfr = PowerCurveByMfr()(11.75)
     ax = vlines(mfr / 3000, ax=ax, label='Mfr PC',
                 linestyles='-.', color='k')
     ax = vlines(np.percentile(hist_pout, 5) / 3000, ax=ax, label='5$^\mathrm{th}$ percentile', color='g')

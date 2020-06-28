@@ -5,13 +5,14 @@ import numpy as np
 from numpy import ndarray
 import datetime
 import re
-from File_Management.path_and_file_management_Func import list_all_specific_format_files_in_a_path
+from File_Management.path_and_file_management_Func import list_all_specific_format_files_in_a_folder_path
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save
 from WT_Class import WT
 from scipy.io import loadmat
 import os
 from pathlib import Path
 from Ploting.fast_plot_Func import *
+from TimeSeries_Class import TimeSeries, merge_two_time_series_df
 
 
 def convert_datetime_str_in_txt_to_datetime64(ts: ndarray, from_: str = 'txt'):
@@ -38,26 +39,35 @@ def __load_time_stamp_from_met_mast_txt():
     return convert_datetime_str_in_txt_to_datetime64(ts)
 
 
-def load_temperature_data():
-    files = list_all_specific_format_files_in_a_path(project_path_ + 'Data/Raw_measurements/Darly/', 'csv', '')
+def load_weather_data():
+    files = list_all_specific_format_files_in_a_folder_path(project_path_ + 'Data/Raw_measurements/Darly/', 'csv', '')
     pattern = re.compile(r'^.*\d+Weather')
-    temperature_data = pd.DataFrame({'time': [], 'environmental temperature': []})
+    weather_data = pd.DataFrame({'time': [],
+                                 'environmental temperature': [],
+                                 'relative humidity': [],
+                                 'barometric pressure': []})
     for file in files:
         regex = pattern.match(file)
         if regex is not None:
             one_reading = pd.read_csv(file, sep=',', skiprows=list(range(280)))
-            one_reading_pd = pd.DataFrame({'time': convert_datetime_str_in_txt_to_datetime64(
-                one_reading['ob_time'].values[:-1], ''),
-                'environmental temperature': one_reading['air_temperature'].values[:-1]})
-            temperature_data = pd.concat([temperature_data, one_reading_pd])
-    return temperature_data
+            one_reading_pd = pd.DataFrame(
+                {
+                    'time': convert_datetime_str_in_txt_to_datetime64(one_reading['ob_time'].values[:-1], ''),
+                    'environmental temperature': one_reading['air_temperature'].values[:-1],
+                    'relative humidity': one_reading['rltv_hum'].values[:-1],
+                    'barometric pressure': one_reading['stn_pres'].values[:-1],
+                }
+            )
+            weather_data = pd.concat([weather_data, one_reading_pd])
+    return weather_data
 
 
 def load_raw_wt_from_txt_file_and_temperature_from_csv():
     wind_turbines = []
-    files = list_all_specific_format_files_in_a_path(project_path_ + 'Data/Raw_measurements/Darly/', 'txt', order='')
+    files = list_all_specific_format_files_in_a_folder_path(project_path_ + 'Data/Raw_measurements/Darly/', 'txt',
+                                                            order='')
     pattern = re.compile(r'^.*Turbine(\d+)\.txt$')
-    temperature_data = load_temperature_data()
+    weather_data = load_weather_data()
     for file in files:
         regex = pattern.match(file)
         if regex is not None:
@@ -75,15 +85,17 @@ def load_raw_wt_from_txt_file_and_temperature_from_csv():
                     'reactive power output': one_reading.iloc[:, 6] * 6 / 1000,
                     'absolute wind direction': one_reading.iloc[:, 3],
                     'relative wind direction': one_reading.iloc[:, 4]})
-                measurements = pd.merge(measurements, temperature_data, on='time', how='left')
-                # 因为第一天的零点没有值，所以人工加上
-                measurements.loc[0, 'environmental temperature'] = float(
-                    measurements['environmental temperature'].values[144])
-                measurements['environmental temperature'] = measurements['environmental temperature'].interpolate()
+                measurements = pd.merge(measurements, weather_data, on='time', how='left')
+                # # 因为第一天的零点没有值，所以人工加上
+                # measurements.loc[0, 'environmental temperature'] = float(
+                #     measurements['environmental temperature'].values[144])
+                measurements[['environmental temperature', 'relative humidity', 'barometric pressure']] = measurements[
+                    ['environmental temperature', 'relative humidity', 'barometric pressure']
+                ].interpolate()
                 if float(np.sum(np.diff(measurements['time'].values.astype('float')) <
                                 np.mean(np.diff(measurements['time'].values.astype('float'))) / 2)) > 0:
                     raise Exception('Duplicated time stamp found')
-                return measurements
+                return measurements.set_index('time')
 
             wind_turbines.append(WT(name=name, measurements=get_measurements))
     return tuple(wind_turbines)
@@ -143,3 +155,7 @@ def temp_func():
             y_label='Power output (p.u.)',
             x_lim=(-.05, 29.6),
             y_lim=(-0.01, 1.06))
+
+
+if __name__ == '__main__':
+    load_raw_wt_from_txt_file_and_temperature_from_csv()

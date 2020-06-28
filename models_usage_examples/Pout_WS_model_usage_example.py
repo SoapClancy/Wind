@@ -67,10 +67,10 @@ if __name__ == '__main__':
     print(probabilistic_power_output_data[0].find_nearest_inverse_cdf(0.95))
     # example of getting the PDF of probabilistic_power_output_data[0]
     probabilistic_power_output_data[0].plot_pdf(np.arange(0, 3030),
-                                                x_label="Power output (W)")
+                                                x_label="Power output (kW)")
     # example of getting the CDF of probabilistic_power_output_data[0]
     probabilistic_power_output_data[0].plot_cdf(np.arange(0, 3030),
-                                                x_label="Power output (W)",
+                                                x_label="Power output (kW)",
                                                 y_lim=(-0.01, 1.02))
 
 

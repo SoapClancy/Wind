@@ -37,14 +37,15 @@ class WT:
     """
     name: WT的名字
     measurements: 一个pd.DataFrame，包含同步测量的数据，DataFrame.columns，可选包含:
-        'time',
         'wind speed',
         'wind speed std.',
         'active power output',
         'reactive power output',
         'absolute wind direction',
         'relative wind direction',
-        'environmental temperature'
+        'environmental temperature' [Celsius degree],
+        'relative humidity' (range 0 to 100), 
+        'barometric pressure [hPa]'
     outlier_category: 异常值分类
     """
 
@@ -85,13 +86,14 @@ class WT:
         )
 
     def __str__(self):
-        t1 = np_datetime64_to_datetime(self.measurements['time'].values[0]).strftime('%Y-%m-%d %H.%M')
-        t2 = np_datetime64_to_datetime(self.measurements['time'].values[-1]).strftime('%Y-%m-%d %H.%M')
-        current_season = self.get_current_season()
-        if current_season == 'all seasons':
-            return "{} wind turbine from {} to {}".format(self.name, t1, t2)
-        else:
-            return "{} wind turbine from {} to {} {}".format(self.name, t1, t2, current_season)
+        t1 = self.measurements.first_valid_index().strftime('%Y-%m-%d %H.%M')
+        t2 = self.measurements.last_valid_index().strftime('%Y-%m-%d %H.%M')
+        # TODO SynchronousTimeSeriesData is depreciated
+        # current_season = self.get_current_season()
+        # if current_season == 'all seasons':
+        return f"{self.name} wind turbine from {t1} to {t2}"
+        # else:
+        #     return "{} wind turbine from {} to {} {}".format(self.name, t1, t2, current_season)
 
     @staticmethod
     def __transform_active_power_output_from_linear_to_original(active_power_output_linear: ndarray,
@@ -317,7 +319,7 @@ class WT:
 
     @staticmethod
     def estimate_active_power_output_by_mfr_power_curve(wind_speed_ndarray: ndarray):
-        return PowerCurveByMfr().cal_active_power_output_according_to_wind_speed(wind_speed_ndarray)
+        return PowerCurveByMfr()(wind_speed_ndarray)
 
     def __add_active_power_output_dim_for_copula_based_estimating_method(self, input_ndarray: ndarray,
                                                                          linspace_number: int) -> ndarray:
