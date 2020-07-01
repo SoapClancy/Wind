@@ -13,15 +13,18 @@ from Data_Preprocessing import float_eps
 import warnings
 from NdarraySubclassing import IntFloatConstructedOneDimensionNdarray
 from typing import Iterable
-from Wind_Class import Wind
+# from Wind_Class import Wind
 from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
+from numba import jit, vectorize, float32, guvectorize
+import tensorflow as tf
 
 
 class PowerCurve(metaclass=ABCMeta):
-    cut_in_wind_speed = 4
-    cut_out_wind_speed = 25
-    rated_active_power_output = 3000
+    cut_in_wind_speed = 4  # [m/s]
+    cut_out_wind_speed = 25  # [m/s]
+    restart_wind_speed = 20  # [m/s]
 
+    rated_active_power_output = 3000  # [kW]
     linestyle = ''  # type:str
     color = ''  # type:str
     label = ''  # type:str
@@ -99,7 +102,7 @@ class PowerCurve(metaclass=ABCMeta):
 class PowerCurveByMfr(PowerCurve):
     linestyle = '-.'
     color = (0.64, 0.08, 0.18)
-    label = 'Mfr PC'
+    label = 'Mfr-PC'
 
     __slots__ = ('mfr_ws', 'mfr_p', 'air_density')
 
@@ -161,59 +164,66 @@ class PowerCurveByMfr(PowerCurve):
         ws = IntFloatConstructedOneDimensionNdarray(ws)
         return interp1d(self.mfr_ws, self.mfr_p)(ws)
 
-    def sasa_algorithm_to_cal_possible_pout_range(self,
-                                                  ws: Union[ndarray, float, int, range],
-                                                  highest_possible_ws: float = 30.) -> pd.DataFrame:
-        ws = IntFloatConstructedOneDimensionNdarray(ws)
-        # %% Initialise the possible power output range, type pd.DataFrame
-        possible_pout_range = pd.DataFrame(
-            {
-                'wind speed [m/s]': ws,
-                'mfr pc used air density [kg/m^3]': np.full(ws.shape, np.nan),
-                'possible power output lower bound [kW]': np.full(ws.shape, np.nan),
-                'possible power output upper bound [kW]': np.full(ws.shape, np.nan),
-            }
-        )
-        # %% Calculate all possible power output ranges for ws
-        for i, this_ws in enumerate(ws):
-            possible_pout_range['mfr pc used air density [kg/m^3]'] = self.air_density
-            possible_average_pout_in_this_10min = []
-            # The loop controlling WS_low, the choices are 1, 2, ..., this_ws - 1
-            for this_ws_lower_bound in range(1, int(this_ws)):
-                # Supposing the lower possible wind speed can happen 1, 2, ..., 9 minutes in the 10min window
-                for how_long_minutes_this_ws_lower_bound_happen in range(1, 10):
-                    how_long_minutes_this_ws_upper_bound_happen = 10 - how_long_minutes_this_ws_lower_bound_happen
-                    this_ws_upper_bound = (this_ws * 10 -
-                                           how_long_minutes_this_ws_lower_bound_happen *
-                                           this_ws_lower_bound) / how_long_minutes_this_ws_upper_bound_happen
-                    if this_ws_upper_bound > highest_possible_ws:
-                        continue  # If WS_high > highest_possible_ws, the results will not be recorded
-                    # calculate the possible average power output in the 10min average window
-                    possible_average_pout_in_this_10min.append(
-                        np.average(self([this_ws_lower_bound, this_ws_upper_bound]),
-                                   weights=(how_long_minutes_this_ws_lower_bound_happen,
-                                            how_long_minutes_this_ws_upper_bound_happen))
-                    )
-                    if (len(possible_average_pout_in_this_10min) == 25) and (this_ws==5):
-                        tt=1
-            # Write the minimum and maximum possible average power output to corresponding ws
-            possible_pout_range.iloc[i, -2:] = [min(possible_average_pout_in_this_10min),
-                                                max(possible_average_pout_in_this_10min)]
-        ax = series(possible_pout_range.iloc[:, 0], possible_pout_range.iloc[:, -2], label='min')
-        ax = scatter(possible_pout_range.iloc[:, 0], self(possible_pout_range.iloc[:, 0].values), ax=ax,
-                     label='Mfr-PC', color='r', marker='+', s=32)
-        ax = series(possible_pout_range.iloc[:, 0], possible_pout_range.iloc[:, -1], ax=ax,
-                    x_label='WS [m/s]', y_label='Pout [kW]', label='max')
-        ax = reassign_linestyles_recursively_in_ax(ax)
+    def cal_with_hysteresis_control_using_high_resol_wind(self, high_resol_wind: ndarray):
+        """
+        TO calculate the Pout considering hysteresis and restart wind speed
+        :param high_resol_wind: 2-D or 3-D ndarray. Which ideally should be the return value of Wind (in Wind_Class.py)
+        instance method "simulate_transient_wind_speed_time_series"
+        axis 0 is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
+        axis 1 is the number of traces
+        axis 2 is the transient time step
+        :return: simulated distribution of Pout
+        axis 0 is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
+        axis 1 is the number of traces (re-average)
+        """
+        if high_resol_wind.ndim == 2:
+            high_resol_wind = np.expand_dims(high_resol_wind, 0)
 
-        return possible_pout_range
+        # Numba type should be determined so it can compile. Dynamic is not allowed
+        numba_var_mfr_ws, numba_var_mfr_p = self.mfr_ws, self.mfr_p
+        numba_var_cut_out_wind_speed = self.cut_out_wind_speed
+        numba_var_restart_wind_speed = self.restart_wind_speed
+
+        @guvectorize([(float32[:], float32[:])], '(n)->(n)', nopython=True, fastmath=True, target='parallel')
+        def calculate_fundamental_one_trace(x, y):
+            """
+            Impressive! Very high performance http://numba.pydata.org/numba-doc/latest/user/vectorize.html#guvectorize
+            I have also tried jit(nopython=True, fastmath=True, parallel=True), but it is not as fast as this
+            :param x: one dimensional, and the index represents transient time step
+            :param y
+            :return:
+            """
+            pout = np.interp(x, numba_var_mfr_ws, numba_var_mfr_p)
+            # calculate hysteresis signal, False means no re-control, True means stay shut-down until below
+            # restart wind speed
+            hysteresis_control_signal = np.full(pout.shape, False)
+            for point_wind_speed_index, point_wind_speed in enumerate(x):
+                if point_wind_speed > numba_var_cut_out_wind_speed:
+                    hysteresis_control_signal[point_wind_speed_index:] = True
+                elif point_wind_speed < numba_var_restart_wind_speed:
+                    hysteresis_control_signal[point_wind_speed_index:] = False
+            # apply control
+            pout[hysteresis_control_signal] = 0.
+            y[:] = pout
+
+        def calculate():
+            numba_func_results = np.full(high_resol_wind.shape, np.nan)
+            for this_high_resol_wind_index, this_high_resol_wind in enumerate(high_resol_wind):
+                this_high_resol_pout_results = calculate_fundamental_one_trace(this_high_resol_wind)
+                numba_func_results[this_high_resol_wind_index] = this_high_resol_pout_results
+            return numba_func_results
+
+        results = calculate()
+        results = np.mean(results, axis=-1)
+        return results
 
     def simulation_based_algorithm_to_cal_possible_pout_range(self,
                                                               ws: Union[ndarray, float, int],
                                                               ws_std: Union[ndarray, float, int], *,
                                                               resolution: int,
                                                               traces: int,
-                                                              original_resolution=600) -> pd.DataFrame:
+                                                              original_resolution=600) -> ndarray:
+        from Wind_Class import Wind
         wind = Wind(ws, ws_std)
         simulated_transient_wind_speed_time_series = wind.simulate_transient_wind_speed_time_series(
             resolution,
@@ -228,6 +238,7 @@ class PowerCurveByMfr(PowerCurve):
                 simulated_average_pout.append(self(this_trace))
         simulated_average_pout = np.array(simulated_average_pout)
         simulated_average_pout = np.mean(simulated_average_pout, axis=1)
+        return simulated_average_pout
 
     @staticmethod
     def __infer_str_air_density(air_density: Union[int, float, ndarray]) -> Union[str, Tuple[str, ...]]:
