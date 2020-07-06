@@ -6,7 +6,7 @@ from project_path_Var import project_path_
 from File_Management.load_save_Func import load_exist_npy_file_otherwise_run_and_save, save_npy_file, \
     load_exist_pkl_file_otherwise_run_and_save, load_npy_file, load_pkl_file
 from BivariateAnalysis_Class import BivariateOutlier
-from File_Management.path_and_file_management_Func import try_to_find_path_otherwise_make_one
+from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
 from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike, UnivariateGaussianMixtureModel, \
     DeterministicUnivariateProbabilisticModel
 from typing import Union, Tuple
@@ -58,8 +58,8 @@ class WT:
         self.outlier_category = outlier_category or np.zeros(measurements.shape[0])
         self.outlier_category_detailed = outlier_category_detailed
         # TODO This outlier part will be finished in the TSE paper
-        # if any((self.outlier_category is None, self.outlier_category_detailed is None)):
-        #     self.identify_outlier()
+        if any((self.outlier_category is None, self.outlier_category_detailed is None)):
+            self.identify_outlier()
 
     def get_current_season(self, season_template: Enum = SeasonTemplate1) -> tuple:
         synchronous = SynchronousTimeSeriesData(self.measurements,
@@ -222,7 +222,7 @@ class WT:
         因为有两个区域，所以其实本质上是两个独立的4d_vine_gmcm_model
         """
         path_ = self.results_path + '4d_cvine_gmcm_model/' + self.__str__() + '/'
-        try_to_find_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
+        try_to_find_folder_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
         fitting_data = self.__prepare_fitting_data_for_4d_vine_gmcm_model(path_)
         for this_region, this_fitting_data in fitting_data.items():
             if (this_region != 'a') and (this_region != 'b'):
@@ -245,7 +245,7 @@ class WT:
             path_ = self.results_path + '3d_cvine_gmcm_model_use_ws_ahead_{}/'.format(use_ws_ahead) + \
                     self.__str__() + '/'
 
-        try_to_find_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
+        try_to_find_folder_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
         fitting_data = self.__prepare_fitting_data_for_3d_vine_gmcm_model(path_)
 
         for this_region, this_fitting_data in fitting_data.items():
@@ -280,7 +280,7 @@ class WT:
         _path = kwargs.get('_path') or (self.results_path + '2d_conditional_probability_by_gmm/' + self.__str__() + \
                                         f' bin_step={bin_step}/')
 
-        try_to_find_path_otherwise_make_one(_path)
+        try_to_find_folder_path_otherwise_make_one(_path)
         bivariate = Bivariate(self.measurements['wind speed'].values[self.outlier_category == 0],
                               self.measurements['active power output'].values[self.outlier_category == 0],
                               bin_step=bin_step)
@@ -289,6 +289,8 @@ class WT:
         @load_exist_pkl_file_otherwise_run_and_save(_path + (kwargs.get('model_name') or 'model.pkl'))
         def load_or_make():
             return bivariate.fit_mob_using_gaussian_mixture_model(**gmm_args)
+
+        load_or_make()
 
     def estimate_active_power_output_by_2d_conditional_probability_model_by_gmm(self,
                                                                                 wind_speed_ndarray: ndarray,
@@ -547,7 +549,7 @@ class WT:
                                y_lim=(-3000 * 0.0125, 3000 * 1.0125), **kwargs)
 
     def identify_outlier(self):
-        try_to_find_path_otherwise_make_one(self.results_path + 'Filtering/' + self.__str__() + '/')
+        try_to_find_folder_path_otherwise_make_one(self.results_path + 'Filtering/' + self.__str__() + '/')
 
         # 先对每一个维度进行outlier分析
         @load_exist_pkl_file_otherwise_run_and_save(
@@ -594,8 +596,8 @@ class WT:
             self.outlier_category[self.outlier_category_detailed['wind speed'].values == 2] = 4
             return self.outlier_category
 
-        self.outlier_category_detailed = load_or_make_outlier_category_detailed
-        self.outlier_category = load_or_make
+        self.outlier_category_detailed = load_or_make_outlier_category_detailed()
+        self.outlier_category = load_or_make()
 
     def update_outlier_category(self, old_category: int, new_category: int):
         CategoryUnivariate(self.outlier_category).update_category(old_category, new_category)

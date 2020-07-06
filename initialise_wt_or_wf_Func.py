@@ -97,7 +97,7 @@ def load_raw_wt_from_txt_file_and_temperature_from_csv():
                     raise Exception('Duplicated time stamp found')
                 return measurements.set_index('time')
 
-            wind_turbines.append(WT(name=name, measurements=get_measurements))
+            wind_turbines.append(WT(name=name, measurements=get_measurements()))
     return tuple(wind_turbines)
 
 
@@ -158,4 +158,24 @@ def temp_func():
 
 
 if __name__ == '__main__':
-    load_raw_wt_from_txt_file_and_temperature_from_csv()
+    tt = load_raw_wt_from_txt_file_and_temperature_from_csv()
+    # for i in tt:
+    #     scatter(i.measurements['wind speed'].values,
+    #             i.measurements['active power output'].values)
+
+    scatter(tt[1].measurements['wind speed'].values,
+            tt[1].measurements['active power output'].values/3000,
+            color='b', alpha=0.5, s=1,
+            x_label='Wind speed [m/s]',
+            y_label='Power output [p.u.]',
+            x_lim=(-.05, 29.6),
+            y_lim=(-0.01, 1.06)
+            )
+
+    # tt2 = load_raw_36_wts_in_nez()
+    # for key, val in tt2.items():
+    #     if not re.match(r"WT.*", key):
+    #         continue
+    #     scatter(val[:, 1],
+    #             val[:, 2],
+    #             title=key)

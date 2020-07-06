@@ -23,7 +23,7 @@ from MarkovChain_Class import OneDimMarkovChain
 from BivariateAnalysis_Class import MethodOfBins
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, save_pkl_file, load_npy_file, \
     load_pkl_file
-from File_Management.path_and_file_management_Func import try_to_find_path_otherwise_make_one
+from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
 from correlation_modeling_main import load_test_data_for_iet_paper
 from Ploting.uncertainty_plot_Func import series_uncertainty_plot
 from Ploting.fast_plot_Func import time_series, vlines
@@ -263,7 +263,7 @@ def train_two_dim_mc_using_first_2_years(full_this_wind_turbine: WT):
                          'two_dim_mc/',
                          specific_this_wind_turbine.__str__(),
                          '/'))
-        try_to_find_path_otherwise_make_one(path_)
+        try_to_find_folder_path_otherwise_make_one(path_)
 
         # mc_matrix
         @load_exist_pkl_file_otherwise_run_and_save(path_ + 'mc_matrix.pkl')
@@ -454,7 +454,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, doing_day_analysis:
                                    '3d_cvine_gmcm_model_use_ws_ahead_1/',
                                    specific_this_wind_turbine.__str__(),
                                    '/PMAPS_paper/'))
-        try_to_find_path_otherwise_make_one(cvine_gmcm_path)
+        try_to_find_folder_path_otherwise_make_one(cvine_gmcm_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(cvine_gmcm_path + 'cvine_gmcm_results_{}.pkl'.format(
             doing_day_analysis
@@ -468,7 +468,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, doing_day_analysis:
         two_dim_mc_path = ''.join((specific_this_wind_turbine.results_path,
                                    'two_dim_mc/',
                                    specific_this_wind_turbine.__str__(), '/'))
-        try_to_find_path_otherwise_make_one(two_dim_mc_path)
+        try_to_find_folder_path_otherwise_make_one(two_dim_mc_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(two_dim_mc_path + 'two_dim_mc_results_{}.pkl'.format(
             doing_day_analysis))
@@ -482,7 +482,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, doing_day_analysis:
                                   '3d_cvine_gmcm_model_use_ws_ahead_1/',
                                   specific_this_wind_turbine.__str__(),
                                   '/PMAPS_paper/'))
-        try_to_find_path_otherwise_make_one(empirical_path)
+        try_to_find_folder_path_otherwise_make_one(empirical_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(empirical_path + 'empirical_results_{}.pkl'.format(
             doing_day_analysis

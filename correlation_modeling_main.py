@@ -15,7 +15,7 @@ from scipy.io import loadmat, savemat
 from project_path_Var import project_path_
 from File_Management.load_save_Func import load_npy_file, load_exist_pkl_file_otherwise_run_and_save, load_pkl_file, \
     save_pkl_file
-from File_Management.path_and_file_management_Func import try_to_find_path_otherwise_make_one
+from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
 from BivariateAnalysis_Class import Bivariate
 from ErrorEvaluation_Class import ProbabilisticErrorIETPaperMethod, EnergyBasedError, DeterministicError
 from Ploting.fast_plot_Func import time_series, vlines
@@ -97,7 +97,7 @@ def for_iet_paper_wd_from_ws(full_this_wind_turbine: WT):
         path_ = ''.join((specific_this_wind_turbine.results_path,
                          'for_iet_paper_wd_from_ws/',
                          specific_this_wind_turbine.__str__() + '/'))
-        try_to_find_path_otherwise_make_one(path_)
+        try_to_find_folder_path_otherwise_make_one(path_)
 
         flag = np.bitwise_and(specific_this_wind_turbine.outlier_category == 0,
                               specific_this_wind_turbine.outlier_category_detailed[
@@ -272,7 +272,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, years: int, doing_d
                                  '2d_gmcm_model/',
                                  specific_this_wind_turbine.__str__(),
                                  '/IET_paper/'))
-        try_to_find_path_otherwise_make_one(_2d_gmcm_path)
+        try_to_find_folder_path_otherwise_make_one(_2d_gmcm_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(_2d_gmcm_path + '_2d_gmcm_results.pkl')
         def cal_using_2d_gmcm_wrapper():
@@ -285,7 +285,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, years: int, doing_d
                                    '3d_cvine_gmcm_model/',
                                    specific_this_wind_turbine.__str__(),
                                    '/IET_paper/'))
-        try_to_find_path_otherwise_make_one(cvine_gmcm_path)
+        try_to_find_folder_path_otherwise_make_one(cvine_gmcm_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(cvine_gmcm_path + 'cvine_gmcm_results.pkl')
         def cal_using_cvine_gmcm_wrapper():
@@ -298,7 +298,7 @@ def test_on_year3_and_by_seasons(full_this_wind_turbine: WT, years: int, doing_d
                             '2d_conditional_probability_by_gmm/',
                             specific_this_wind_turbine.__str__(), ' bin_step=0.5/',
                             'IET_paper/'))
-        try_to_find_path_otherwise_make_one(gmm_path)
+        try_to_find_folder_path_otherwise_make_one(gmm_path)
 
         @load_exist_pkl_file_otherwise_run_and_save(gmm_path + 'gmm_results.pkl')
         def cal_using_gmm_wrapper():
