@@ -8,7 +8,7 @@ from project_path_Var import project_path_
 from File_Management.load_save_Func import load_exist_npy_file_otherwise_run_and_save, save_npy_file, \
     load_exist_pkl_file_otherwise_run_and_save, load_npy_file, load_pkl_file
 from BivariateAnalysis_Class import BivariateOutlier
-from File_Management.path_and_file_management_Func import try_to_find_path_otherwise_make_one
+from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
 from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike, UnivariateGaussianMixtureModel, \
     DeterministicUnivariateProbabilisticModel
 from typing import Union, Tuple, List
@@ -179,7 +179,7 @@ class WF(SynchronousTimeSeriesData):
         3维模型。维度分别是active power output, wind speed, environmental temperature
         """
         path_ = self.results_path + '3d_cvine_gmcm_model/' + self.__str__() + '/'
-        try_to_find_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
+        try_to_find_folder_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
         fitting_data = self.__prepare_fitting_data_for_copula_model(path_, 3)
         for this_region, this_fitting_data in fitting_data.items():
             if (this_region != 'a') and (this_region != 'b'):
@@ -216,7 +216,7 @@ class WF(SynchronousTimeSeriesData):
                                        *, path_: str,
                                        predictor_var_name_list: List,
                                        dependent_var_name_list: List):
-        try_to_find_path_otherwise_make_one(path_)
+        try_to_find_folder_path_otherwise_make_one(path_)
 
         temp = copy.copy(self)
         training_validation_set, _, _ = temp.do_truncate(training_set_period[0], training_set_period[1])

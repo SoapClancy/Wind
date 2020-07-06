@@ -4,19 +4,22 @@ from functools import wraps
 from numpy import ndarray
 from scipy.interpolate import interp1d
 import numpy as np
-from typing import Union, Tuple
+from typing import Union, Tuple, Iterator, Iterable
 from Ploting.fast_plot_Func import *
 from project_path_Var import project_path_
 from scipy.io import loadmat
 import pandas as pd
 from Data_Preprocessing import float_eps
 import warnings
-from NdarraySubclassing import IntFloatConstructedOneDimensionNdarray
+from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, UncertaintyDataFrame, StrOneDimensionNdarray
 from typing import Iterable
 # from Wind_Class import Wind
 from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
-from numba import jit, vectorize, float32, guvectorize
+from numba import jit, vectorize, float32, guvectorize, int32, boolean, int8, bool_
 import tensorflow as tf
+import numba as nb
+import copy
+import time
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -88,15 +91,27 @@ class PowerCurve(metaclass=ABCMeta):
         ax = vlines(self.region_34_boundary, ax)
         return vlines(self.region_45_boundary, ax)
 
-    def plot_power_curve(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None):
+    def plot_power_curve(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None,
+                         mode='continuous', **kwargs):
         ax = self.__plot_region_boundary(ax) if plot_region_boundary else ax
-        ws = ws or np.arange(0, 28.5, 0.01)
+        ws = ws if ws is not None else np.arange(0, 28.5, 0.01)
         active_power_output = self(ws)
-        return series(ws, active_power_output, ax,
-                      linestyle=self.linestyle, color=self.color, label=self.label,
-                      y_lim=(-self.rated_active_power_output * 0.013, self.rated_active_power_output * 1.013),
-                      x_lim=(0, 28.6),
-                      x_label='Wind speed (m/s)', y_label='Active power output (kW)')
+        if mode == 'continuous':
+            return series(ws, active_power_output, ax,
+                          linestyle=self.linestyle, color=self.color, label=self.label,
+                          y_lim=(-self.rated_active_power_output * 0.013, self.rated_active_power_output * 1.013),
+                          x_lim=(0, 28.6),
+                          x_label='Wind speed [m/s]', y_label='Active power output [kW]',
+                          **kwargs)
+        elif mode == 'discrete':
+            return scatter(ws, active_power_output, ax,
+                           color='r', marker='+', s=32, label=self.label,
+                           y_lim=(-self.rated_active_power_output * 0.013, self.rated_active_power_output * 1.013),
+                           x_lim=(0, 28.6),
+                           x_label='Wind speed [m/s]', y_label='Active power output [kW]',
+                           **kwargs)
+        else:
+            raise ValueError("'mode' should be either 'continuous' or 'discrete'")
 
 
 class PowerCurveByMfr(PowerCurve):
@@ -119,7 +134,7 @@ class PowerCurveByMfr(PowerCurve):
         if not isinstance(air_density, str):
             air_density = self.__infer_str_air_density(air_density)
         mfr_pc_metadata = self.make_mfr_pc_metadata()
-        self.mfr_ws = np.concatenate(([0],
+        self.mfr_ws = np.concatenate(([-np.inf],
                                       [mfr_pc_metadata.index.values[0] - float_eps * 2],
                                       mfr_pc_metadata.index.values,
                                       [25 + float_eps * 10],
@@ -164,81 +179,99 @@ class PowerCurveByMfr(PowerCurve):
         ws = IntFloatConstructedOneDimensionNdarray(ws)
         return interp1d(self.mfr_ws, self.mfr_p)(ws)
 
-    def cal_with_hysteresis_control_using_high_resol_wind(self, high_resol_wind: ndarray):
+    def cal_with_hysteresis_control_using_high_resol_wind(
+            self,
+            high_resol_wind,
+            mode: str,
+            return_percentiles=None
+    ) -> Union[ndarray, pd.DataFrame]:
         """
         TO calculate the Pout considering hysteresis and restart wind speed
-        :param high_resol_wind: 2-D or 3-D ndarray. Which ideally should be the return value of Wind (in Wind_Class.py)
-        instance method "simulate_transient_wind_speed_time_series"
-        axis 0 is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
-        axis 1 is the number of traces
-        axis 2 is the transient time step
+
+        :param high_resol_wind: type Iterator
+        should be the return of Wind (in Wind_Class.py) instance method "simulate_transient_wind_speed_time_series"
+        axis 0 is the number of traces
+        axis 1 is the transient time step
+
+        :param mode: can be either "time series" or "cross sectional"
+        refer to Wind (in Wind_Class.py) instance method "simulate_transient_wind_speed_time_series"
+
+        :param return_percentiles: type StrOneDimensionNdarray
+        If specified, then return to a pd.DataFrame instances, whose index is determined by return_percentiles
+
         :return: simulated distribution of Pout
+        for ndarray:
         axis 0 is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
         axis 1 is the number of traces (re-average)
+        for pd.DataFrame:
+        index is return_percentiles,
+        column is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
         """
-        if high_resol_wind.ndim == 2:
-            high_resol_wind = np.expand_dims(high_resol_wind, 0)
-
+        if return_percentiles is not None:
+            return_percentiles = StrOneDimensionNdarray(return_percentiles)
+            return_percentiles = UncertaintyDataFrame(
+                index=np.append(return_percentiles, 'mean'),
+                columns=range(len(high_resol_wind))
+            )
         # Numba type should be determined so it can compile. Dynamic is not allowed
         numba_var_mfr_ws, numba_var_mfr_p = self.mfr_ws, self.mfr_p
         numba_var_cut_out_wind_speed = self.cut_out_wind_speed
         numba_var_restart_wind_speed = self.restart_wind_speed
 
-        @guvectorize([(float32[:], float32[:])], '(n)->(n)', nopython=True, fastmath=True, target='parallel')
-        def calculate_fundamental_one_trace(x, y):
+        @guvectorize([(float32[:], boolean[:], float32[:], boolean[:])],
+                     '(n), (n)->(n), (n)', nopython=True, target='parallel')
+        def perform_calculation(x, control_signal_input, y, control_signal_output):
             """
             Impressive! Very high performance http://numba.pydata.org/numba-doc/latest/user/vectorize.html#guvectorize
             I have also tried jit(nopython=True, fastmath=True, parallel=True), but it is not as fast as this
-            :param x: one dimensional, and the index represents transient time step
-            :param y
-            :return:
             """
-            pout = np.interp(x, numba_var_mfr_ws, numba_var_mfr_p)
-            # calculate hysteresis signal, False means no re-control, True means stay shut-down until below
-            # restart wind speed
-            hysteresis_control_signal = np.full(pout.shape, False)
-            for point_wind_speed_index, point_wind_speed in enumerate(x):
-                if point_wind_speed > numba_var_cut_out_wind_speed:
-                    hysteresis_control_signal[point_wind_speed_index:] = True
-                elif point_wind_speed < numba_var_restart_wind_speed:
-                    hysteresis_control_signal[point_wind_speed_index:] = False
+            y[:] = np.interp(x, numba_var_mfr_ws, numba_var_mfr_p)
+            # Need to look at each WS inside a trace.
+            # Calculate hysteresis signal, 'False' means no re-control,
+            # 'True' means stay shut-down until below restart wind speed
+            for this_wind_speed_index, this_wind_speed in enumerate(x):
+                if this_wind_speed > numba_var_cut_out_wind_speed:
+                    control_signal_input[this_wind_speed_index:] = True
+                elif this_wind_speed < numba_var_restart_wind_speed:
+                    control_signal_input[this_wind_speed_index:] = False
             # apply control
-            pout[hysteresis_control_signal] = 0.
-            y[:] = pout
+            y[control_signal_input] = 0.
+            control_signal_output[:] = control_signal_input[:]
 
-        def calculate():
-            numba_func_results = np.full(high_resol_wind.shape, np.nan)
-            for this_high_resol_wind_index, this_high_resol_wind in enumerate(high_resol_wind):
-                this_high_resol_pout_results = calculate_fundamental_one_trace(this_high_resol_wind)
-                numba_func_results[this_high_resol_wind_index] = this_high_resol_pout_results
-            return numba_func_results
+        results = []
+        # hysteresis_control_signal = None
+        hysteresis_control_signal = None
+        for this_high_resol_wind_index, this_high_resol_wind in enumerate(high_resol_wind):
+            # Initialise the hysteresis_control_signal
+            if (this_high_resol_wind_index == 0) or (mode == 'cross sectional'):
+                hysteresis_control_signal = np.full(this_high_resol_wind.shape, False)
+            elif mode == 'time series':
+                # Only use the last control signals as init
+                hysteresis_control_signal = np.repeat(hysteresis_control_signal[:, [-1]],
+                                                      hysteresis_control_signal.shape[-1],
+                                                      axis=1)
+            else:
+                raise ValueError("'mode' should be either 'cross sectional' or 'time series'")
 
-        results = calculate()
-        results = np.mean(results, axis=-1)
-        return results
-
-    def simulation_based_algorithm_to_cal_possible_pout_range(self,
-                                                              ws: Union[ndarray, float, int],
-                                                              ws_std: Union[ndarray, float, int], *,
-                                                              resolution: int,
-                                                              traces: int,
-                                                              original_resolution=600) -> ndarray:
-        from Wind_Class import Wind
-        wind = Wind(ws, ws_std)
-        simulated_transient_wind_speed_time_series = wind.simulate_transient_wind_speed_time_series(
-            resolution,
-            traces,
-            original_resolution
-        )
-        simulated_average_pout = []
-        # Iter over all ws
-        for this_ws_index in range(simulated_transient_wind_speed_time_series.shape[-1]):
-            # Iter over all traces
-            for this_trace in simulated_transient_wind_speed_time_series[:, :, this_ws_index]:
-                simulated_average_pout.append(self(this_trace))
-        simulated_average_pout = np.array(simulated_average_pout)
-        simulated_average_pout = np.mean(simulated_average_pout, axis=1)
-        return simulated_average_pout
+            this_high_resol_pout_results, hysteresis_control_signal = perform_calculation(
+                this_high_resol_wind,
+                hysteresis_control_signal
+            )
+            this_high_resol_pout_results = np.mean(this_high_resol_pout_results, axis=1)
+            if return_percentiles is not None:
+                # The reason not using @guvectorize decorating np.percentile is it will actually be slower...
+                return_percentiles[this_high_resol_wind_index] = np.concatenate(
+                    (np.percentile(this_high_resol_pout_results,
+                                   return_percentiles.index.values[:-1].astype(float)),
+                     np.mean(this_high_resol_pout_results, keepdims=True))
+                )
+            else:
+                results.append(this_high_resol_pout_results)
+        if return_percentiles is not None:
+            # Must save as pd.DataFrame for stability. As UncertaintyDataFrame may change frequently
+            return pd.DataFrame(return_percentiles)
+        else:
+            return np.array(results)
 
     @staticmethod
     def __infer_str_air_density(air_density: Union[int, float, ndarray]) -> Union[str, Tuple[str, ...]]:
