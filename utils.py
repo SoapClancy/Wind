@@ -3,7 +3,7 @@ from numpy import ndarray
 import pandas as pd
 from Ploting.fast_plot_Func import *
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray
-from initialise_wt_or_wf_Func import load_raw_wt_from_txt_file_and_temperature_from_csv
+from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
 from PowerCurve_Class import PowerCurveByMfr
 
 

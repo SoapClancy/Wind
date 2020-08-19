@@ -4,7 +4,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from PowerCurve_Class import PowerCurveByMfr
 import pandas as pd
-from initialise_wt_or_wf_Func import load_raw_wt_from_txt_file_and_temperature_from_csv
+from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
 from BivariateAnalysis_Class import MethodOfBins
 from typing import Iterator
 

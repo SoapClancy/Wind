@@ -14,11 +14,11 @@ from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and
 from Ploting.fast_plot_Func import hist, series, scatter, vlines, hlines
 from BivariateAnalysis_Class import Bivariate
 from scipy.io import loadmat
-from initialise_wt_or_wf_Func import load_raw_wt_from_txt_file_and_temperature_from_csv, \
+from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv, \
     create_dalry_wind_farm_obj_using_wf_filling_missing_old
 from Time_Processing.Season_Enum import SeasonTemplate1
 import copy
-from WT_Class import WT
+from WT_WF_Class import WT
 from MarkovChain_Class import OneDimMarkovChain
 from BivariateAnalysis_Class import MethodOfBins
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, save_pkl_file, load_npy_file, \

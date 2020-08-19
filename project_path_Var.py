@@ -1,7 +1,3 @@
-import os
-import re
+from pathlib import Path
 
-project_path_ = os.path.dirname(os.path.abspath(__file__))
-project_path_ = os.path.abspath(os.path.join(project_path_, "../"))
-project_path_ = project_path_ + '/'
-project_path_ = re.sub(r'\\', '/', project_path_)
+project_path_ = Path().cwd().parent  # type: Path

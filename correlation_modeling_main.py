@@ -1,5 +1,5 @@
-from initialise_wt_or_wf_Func import load_raw_wt_from_txt_file_and_temperature_from_csv
-from WT_Class import WT
+from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
+from WT_WF_Class import WT
 from Ploting.fast_plot_Func import series, scatter, time_series, hist, scatter_density
 from numpy import ndarray
 import numpy as np

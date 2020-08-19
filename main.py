@@ -2,8 +2,8 @@ from File_Management.path_and_file_management_Func import remove_win10_max_path_
 import time
 from datetime import datetime
 import numpy as np
-from initialise_wt_or_wf_Func import load_raw_wt_from_txt_file_and_temperature_from_csv
-from WT_Class import WT
+from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
+from WT_WF_Class import WT
 from File_Management.load_save_Func import load_npy_file
 
 """

@@ -4,7 +4,7 @@ from functools import wraps
 from numpy import ndarray
 from scipy.interpolate import interp1d
 import numpy as np
-from typing import Union, Tuple, Iterator, Iterable
+from typing import Union, Tuple, Iterator, Iterable, Callable
 from Ploting.fast_plot_Func import *
 from project_path_Var import project_path_
 from scipy.io import loadmat
@@ -20,6 +20,8 @@ import tensorflow as tf
 import numba as nb
 import copy
 import time
+from collections import OrderedDict
+from geneticalgorithm import geneticalgorithm as ga
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -32,8 +34,7 @@ class PowerCurve(metaclass=ABCMeta):
     color = ''  # type:str
     label = ''  # type:str
 
-    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary',
-                 'power_curve_look_up_table')
+    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary')
 
     @abstractmethod
     def __call__(self, ws: Union[Iterable, float, int]):
@@ -91,24 +92,24 @@ class PowerCurve(metaclass=ABCMeta):
         ax = vlines(self.region_34_boundary, ax)
         return vlines(self.region_45_boundary, ax)
 
-    def plot_power_curve(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None,
-                         mode='continuous', **kwargs):
+    def plot(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None,
+             mode='continuous', **kwargs):
         ax = self.__plot_region_boundary(ax) if plot_region_boundary else ax
         ws = ws if ws is not None else np.arange(0, 28.5, 0.01)
         active_power_output = self(ws)
         if mode == 'continuous':
             return series(ws, active_power_output, ax,
                           linestyle=self.linestyle, color=self.color, label=self.label,
-                          y_lim=(-self.rated_active_power_output * 0.013, self.rated_active_power_output * 1.013),
-                          x_lim=(0, 28.6),
-                          x_label='Wind speed [m/s]', y_label='Active power output [kW]',
+                          y_lim=(-0.05, 1.05),
+                          x_lim=(-0.05, 29.5),
+                          x_label='Wind speed [m/s]', y_label='Active power output [p.u.]',
                           **kwargs)
         elif mode == 'discrete':
             return scatter(ws, active_power_output, ax,
                            color='r', marker='+', s=32, label=self.label,
-                           y_lim=(-self.rated_active_power_output * 0.013, self.rated_active_power_output * 1.013),
-                           x_lim=(0, 28.6),
-                           x_label='Wind speed [m/s]', y_label='Active power output [kW]',
+                           y_lim=(-0.05, 1.05),
+                           x_lim=(-0.05, 29.5),
+                           x_label='Wind speed [m/s]', y_label='Active power output [p.u.]',
                            **kwargs)
         else:
             raise ValueError("'mode' should be either 'continuous' or 'discrete'")
@@ -389,11 +390,16 @@ class PowerCurveByMfr(PowerCurve):
 
 
 class PowerCurveByMethodOfBins(PowerCurve):
-    __slots__ = ('wind_speed_recording', 'active_power_output_recording')
+    linestyle = ':'
+    color = 'red'
+    label = 'PC by scatters'
 
-    def __init__(self, wind_speed_recording: ndarray, active_power_output_recording: ndarray, linestyle=':',
-                 color='#00ffff', label='Scatters PC', *, cal_region_boundary: bool = True):
-        super().__init__(linestyle, color, label)
+    __slots__ = ('wind_speed_recording', 'active_power_output_recording', 'power_curve_look_up_table')
+
+    def __init__(self,
+                 wind_speed_recording: ndarray,
+                 active_power_output_recording: ndarray,
+                 *, cal_region_boundary: bool):
         self.wind_speed_recording = wind_speed_recording
         self.active_power_output_recording = active_power_output_recording
         self.power_curve_look_up_table = self.__cal_power_curve_look_up_table()
@@ -406,8 +412,10 @@ class PowerCurveByMethodOfBins(PowerCurve):
         """
         利用线性插值得到高精度(bin=0.05m/s)的power curve的查找表
         """
-        power_curve_look_up_table_hi_resol = np.arange(0, 30, 0.05).reshape(-1, 1)
-        power_curve_look_up_table_hi_resol = np.stack(np.broadcast(power_curve_look_up_table_hi_resol, np.nan), axis=0)
+        core_ws = np.arange(0, 30, 0.05)
+        power_curve_look_up_table_hi_resol = np.full((core_ws.size, 2), np.nan)
+        power_curve_look_up_table_hi_resol[:, 0] = core_ws
+        del core_ws
         power_curve_look_up_table = MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                                                  bin_step=0.5,
                                                  first_bin_left_boundary=0,
@@ -425,10 +433,118 @@ class PowerCurveByMethodOfBins(PowerCurve):
         return interp1d(np.concatenate((np.array([-100]), self.power_curve_look_up_table[:, 0], np.array([100]))),
                         np.concatenate((np.array([0]), self.power_curve_look_up_table[:, 1], np.array([0]))))(ws)
 
-    def plot_power_curve(self, ws: ndarray = None, plot_region_boundary: bool = True, plot_recording: bool = True):
-        ax = scatter(self.wind_speed_recording, self.active_power_output_recording,
-                     alpha=0.1) if plot_recording else None
-        return super().plot_power_curve(ws, plot_region_boundary, ax)
+    def plot(self,
+             ws: ndarray = None,
+             plot_region_boundary: bool = False,
+             ax=None,
+             plot_recording: bool = True,
+             mode='continuous',
+             **kwargs):
+        ax = scatter(self.wind_speed_recording, self.active_power_output_recording, ax=ax, color='royalblue',
+                     alpha=0.5) if plot_recording else ax
+        return super().plot(ws, plot_region_boundary, ax, mode=mode, **kwargs)
+
+
+class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
+    linestyle = '--'
+    color = 'darkorange'
+    label = '8PL PC'
+    __slots__ = ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2')
+
+    @classmethod
+    def init_from_power_curve_by_method_of_bins(cls,
+                                                power_curve_by_method_of_bins_instance: PowerCurveByMethodOfBins):
+        return cls(wind_speed_recording=power_curve_by_method_of_bins_instance.wind_speed_recording,
+                   active_power_output_recording=power_curve_by_method_of_bins_instance.active_power_output_recording)
+
+    def __init__(self,
+                 wind_speed_recording: ndarray,
+                 active_power_output_recording: ndarray,
+                 **kwargs):
+        super(PowerCurveFittedBy8PL, self).__init__(wind_speed_recording=wind_speed_recording,
+                                                    active_power_output_recording=active_power_output_recording,
+                                                    cal_region_boundary=False)
+        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
+            exec(f"self.{this_param} = float({kwargs}.get('{this_param}')) "
+                 f"if {kwargs}.get('{this_param}') is not None else None")
+
+    @staticmethod
+    def call_func() -> Callable:
+        def f(x, a, d, b_1, b_2, c_1, c_2, g_1, g_2):
+            left_side = d + (a - d) / np.power(1 + np.power(x / c_1, b_1), g_1)
+            right_side = d + (a - d) / np.power(1 + np.power(x / c_2, b_2), g_2)
+            output = np.min(np.stack((left_side, right_side), axis=0), axis=0)
+            return np.array(output)
+
+        return f
+
+    def __call__(self, ws: Union[Iterable, float, int]) -> ndarray:
+        ws = IntFloatConstructedOneDimensionNdarray(ws)
+        func = self.call_func()
+        return func(ws, self.a, self.d, self.b_1, self.b_2, self.c_1, self.c_2, self.g_1, self.g_2)
+
+    @staticmethod
+    def _params_constraints() -> OrderedDict:
+        constraints = OrderedDict(
+            [
+                ('a', [0.9, 1.1]),
+                ('d', [-0.1, 0.1]),
+                ('b_1', [-120.0, 0]),
+                ('b_2', [0, 120.0]),
+                ('c_1', [float_eps, 30.0]),
+                ('c_2', [float_eps, 30.0]),
+                ('g_1', [float_eps, 30.0]),
+                ('g_2', [float_eps, 30.0]),
+            ]
+        )
+        return constraints
+
+    def _params_init(self):
+        constraints = self._params_constraints()
+        type(constraints)
+        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
+            source_code = f"self.{this_param} = (" \
+                          f"constraints['{this_param}'][0] + constraints['{this_param}'][-1]" \
+                          f") / 2"
+            exec(source_code)
+
+    def _loss_func(self) -> Callable:
+        def func(x):
+            target = self.power_curve_look_up_table[:, 1]
+            model_output = self.call_func()(self.power_curve_look_up_table[:, 0], *x)
+
+            return float(np.sqrt(np.nanmean((target - model_output) ** 2)))
+
+        return func
+
+    def fit(self, **kwargs):
+        # %% check
+        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
+            source_code = f"if self.{this_param} is not None: " \
+                          f"warnings.warn(\"\'{this_param}\' will be overwritten\", UserWarning)"
+            exec(source_code)
+        constraints = self._params_constraints()
+        self._params_init()
+
+        algorithm_param = {'max_num_iteration': 8000,
+                           'population_size': 100,
+                           'mutation_probability': 0.1,
+                           'elit_ratio': 0.01,
+                           'crossover_probability': 0.5,
+                           'parents_portion': 0.3,
+                           'crossover_type': 'uniform',
+                           'max_iteration_without_improv': 800}
+
+        ga_model = ga(function=self._loss_func(),
+                      dimension=8,
+                      variable_type='real',
+                      variable_boundaries=np.array(list(constraints.values())),
+                      algorithm_parameters=algorithm_param)
+        ga_model.run()
+        # Update 8PL PC
+        for i, this_param in enumerate(('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2')):
+            source_code = f"self.{this_param} = ga_model.best_variable[{i}]"
+            exec(source_code)
 
 
 if __name__ == '__main__':
