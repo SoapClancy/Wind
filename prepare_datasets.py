@@ -207,7 +207,12 @@ if __name__ == '__main__':
     test_wf = create_dalry_wind_farm_obj_using_wf_filling_missing_old()
     test_pc = test_wf.power_curve_by_method_of_bins()
     test_pc = PowerCurveFittedBy8PL.init_from_power_curve_by_method_of_bins(test_pc)
-    test_pc.fit()
+    test_pc.update_params(*[1.0, -6.06147393e-03, -9.784173449e+00, 2.50094859e+01,
+                            1.1163476e+01, 2.6918891e+01, 2.5509312e-01, .25560337e+00])
+    test_pc.fit(ga_algorithm_param={'max_num_iteration': 100,
+                                    'max_iteration_without_improv': 100},
+                params_init_scheme='self',
+                run_n_times=5)
     test_pc.plot()
     # load_croatia_data()
     # tt = load_raw_wt_from_txt_file_and_temperature_from_csv()

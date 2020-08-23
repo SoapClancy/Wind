@@ -11,23 +11,28 @@ from scipy.io import loadmat
 import pandas as pd
 from Data_Preprocessing import float_eps
 import warnings
-from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, UncertaintyDataFrame, StrOneDimensionNdarray
+from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, UncertaintyDataFrame, StrOneDimensionNdarray, \
+    OneDimensionNdarray
 from typing import Iterable
-# from Wind_Class import Wind
 from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
 from numba import jit, vectorize, float32, guvectorize, int32, boolean, int8, bool_
 import tensorflow as tf
 import numba as nb
 import copy
 import time
-from collections import OrderedDict
+from collections import OrderedDict, ChainMap
 from geneticalgorithm import geneticalgorithm as ga
+import itertools
+from inspect import Parameter, Signature
+import inspect
+from pathlib import Path
+from File_Management.load_save_Func import save_pkl_file
 
 
 class PowerCurve(metaclass=ABCMeta):
-    cut_in_wind_speed = 4  # [m/s]
-    cut_out_wind_speed = 25  # [m/s]
-    restart_wind_speed = 20  # [m/s]
+    cut_in_wind_speed = 4.  # [m/s]
+    cut_out_wind_speed = 25.  # [m/s]
+    restart_wind_speed = 20.  # [m/s]
 
     rated_active_power_output = 3000  # [kW]
     linestyle = ''  # type:str
@@ -95,7 +100,7 @@ class PowerCurve(metaclass=ABCMeta):
     def plot(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None,
              mode='continuous', **kwargs):
         ax = self.__plot_region_boundary(ax) if plot_region_boundary else ax
-        ws = ws if ws is not None else np.arange(0, 28.5, 0.01)
+        ws = ws if ws is not None else np.arange(0, 29.5, 0.01)
         active_power_output = self(ws)
         if mode == 'continuous':
             return series(ws, active_power_output, ax,
@@ -122,7 +127,9 @@ class PowerCurveByMfr(PowerCurve):
 
     __slots__ = ('mfr_ws', 'mfr_p', 'air_density')
 
-    def __init__(self, air_density: Union[int, float, str] = None):
+    def __init__(self,
+                 air_density: Union[int, float, str] = None,
+                 *, cut_in_ws: Union[int, float] = None):
         if air_density is None:
             warnings.warn("'air_density' unspecified. Set air_density to 1.15."
                           "But this may lead to unrealistic manufacturer power curve."
@@ -136,7 +143,7 @@ class PowerCurveByMfr(PowerCurve):
             air_density = self.__infer_str_air_density(air_density)
         mfr_pc_metadata = self.make_mfr_pc_metadata()
         self.mfr_ws = np.concatenate(([-np.inf],
-                                      [mfr_pc_metadata.index.values[0] - float_eps * 2],
+                                      [cut_in_ws or mfr_pc_metadata.index.values[0] - float_eps * 2],
                                       mfr_pc_metadata.index.values,
                                       [25 + float_eps * 10],
                                       [np.inf]))
@@ -144,11 +151,11 @@ class PowerCurveByMfr(PowerCurve):
                                      [0],
                                      mfr_pc_metadata[air_density].values,
                                      [0],
-                                     [0]))
+                                     [0])) / self.rated_active_power_output
         self.air_density = air_density
 
     @classmethod
-    def init_multiple_instances(cls, air_density: ndarray) -> tuple:
+    def init_multiple_instances(cls, air_density: ndarray, **kwargs) -> tuple:
         """
         Initialise multiple PowerCurveByMfr instances，
         suitable for long period of analysis, as the air density will change
@@ -169,7 +176,7 @@ class PowerCurveByMfr(PowerCurve):
         # %% initialise the instances, but, remember, the same instances are copies,
         # i.e., if the air density strings are the same, the instances share the same memory
         for i, this_air_density_str in enumerate(air_density_str_unique):
-            this_instance = cls(this_air_density_str.__str__())
+            this_instance = cls(this_air_density_str.__str__(), **kwargs)
             multiple_instances[air_density_str_unique_inverse == i] = this_instance
         return tuple(multiple_instances)  # type Tuple[PowerCurveByMfr, ...]
 
@@ -388,21 +395,35 @@ class PowerCurveByMfr(PowerCurve):
             })
         return metadata
 
+    @classmethod
+    def air_density_in_docs(cls):
+        return '0.97', '1', '1.03', '1.06', '1.09', '1.12', '1.15', '1.18', '1.21', '1.225', '1.24', '1.27'
+
+    @classmethod
+    def init_all_instances_in_docs(cls, **kwargs):
+        air_density_in_docs_float = np.array([float(x) for x in cls.air_density_in_docs()])
+        return cls.init_multiple_instances(air_density_in_docs_float, **kwargs)
+
 
 class PowerCurveByMethodOfBins(PowerCurve):
     linestyle = ':'
     color = 'red'
-    label = 'PC by scatters'
+    label = 'MOB PC'
 
     __slots__ = ('wind_speed_recording', 'active_power_output_recording', 'power_curve_look_up_table')
 
     def __init__(self,
                  wind_speed_recording: ndarray,
                  active_power_output_recording: ndarray,
-                 *, cal_region_boundary: bool):
+                 *, interp_for_high_resol: bool = True,
+                 cal_region_boundary: bool):
         self.wind_speed_recording = wind_speed_recording
         self.active_power_output_recording = active_power_output_recording
-        self.power_curve_look_up_table = self.__cal_power_curve_look_up_table()
+        if interp_for_high_resol:
+            self.power_curve_look_up_table = self.__cal_power_curve_look_up_table()
+        else:
+            self.power_curve_look_up_table = np.stack((self.wind_speed_recording,
+                                                       self.active_power_output_recording), axis=1)
         # 只有在把outlier都去除了的条件下去计算region boundary才有意义，不然根本连rated都达不到，算法会有问题
         if cal_region_boundary:
             self.region_12_boundary, self.region_23_boundary, self.region_34_boundary, self.region_45_boundary = \
@@ -419,17 +440,15 @@ class PowerCurveByMethodOfBins(PowerCurve):
         power_curve_look_up_table = MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                                                  bin_step=0.5,
                                                  first_bin_left_boundary=0,
-                                                 last_bin_left_boundary=28.5).cal_mob_statistic()
+                                                 last_bin_left_boundary=29.5).cal_mob_statistic()
         power_curve_look_up_table_hi_resol[:, 1] = interp1d(
             np.concatenate((np.array([-100]), power_curve_look_up_table[:, 0], np.array([100]))),
             np.concatenate((np.array([0]), power_curve_look_up_table[:, 1], np.array([0]))))(
             power_curve_look_up_table_hi_resol[:, 0])
         return power_curve_look_up_table_hi_resol
 
-    def __call__(self, ws: Union[Iterable, float, int]) -> ndarray:
-        if not isinstance(ws, ndarray):
-            ws = np.array([ws * 1.0])
-        ws = ws.flatten()
+    def __call__(self, ws: IntFloatConstructedOneDimensionNdarray) -> ndarray:
+        ws = IntFloatConstructedOneDimensionNdarray(ws)
         return interp1d(np.concatenate((np.array([-100]), self.power_curve_look_up_table[:, 0], np.array([100]))),
                         np.concatenate((np.array([0]), self.power_curve_look_up_table[:, 1], np.array([0]))))(ws)
 
@@ -449,7 +468,9 @@ class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
     linestyle = '--'
     color = 'darkorange'
     label = '8PL PC'
-    __slots__ = ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2')
+    ordered_params = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
+
+    __slots__ = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
 
     @classmethod
     def init_from_power_curve_by_method_of_bins(cls,
@@ -458,34 +479,70 @@ class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
                    active_power_output_recording=power_curve_by_method_of_bins_instance.active_power_output_recording)
 
     def __init__(self,
-                 wind_speed_recording: ndarray,
-                 active_power_output_recording: ndarray,
+                 wind_speed_recording: ndarray = None,
+                 active_power_output_recording: ndarray = None,
+                 *, interp_for_high_resol: bool = True,
                  **kwargs):
         super(PowerCurveFittedBy8PL, self).__init__(wind_speed_recording=wind_speed_recording,
                                                     active_power_output_recording=active_power_output_recording,
+                                                    interp_for_high_resol=interp_for_high_resol,
                                                     cal_region_boundary=False)
-        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
-            exec(f"self.{this_param} = float({kwargs}.get('{this_param}')) "
-                 f"if {kwargs}.get('{this_param}') is not None else None")
+        self.update_params(**kwargs)
 
-    @staticmethod
-    def call_func() -> Callable:
-        def f(x, a, d, b_1, b_2, c_1, c_2, g_1, g_2):
-            left_side = d + (a - d) / np.power(1 + np.power(x / c_1, b_1), g_1)
-            right_side = d + (a - d) / np.power(1 + np.power(x / c_2, b_2), g_2)
-            output = np.min(np.stack((left_side, right_side), axis=0), axis=0)
-            return np.array(output)
+    @classmethod
+    def call_static_func(cls) -> Callable:
+        source = f"def static_func(x, {', '.join(cls.ordered_params)}):\n" \
+                 f"    left_side = d + (a - d) / np.power(1 + np.power(x / c_1, b_1), g_1)\n" \
+                 f"    right_side = d + (a - d) / np.power(1 + np.power(x / c_2, b_2), g_2)\n" \
+                 f"    output = np.min(np.stack((left_side, right_side), axis=0), axis=0)\n" \
+                 f"    return np.array(output)"
+        exec(source, globals())
 
-        return f
+        return globals()['static_func']
 
-    def __call__(self, ws: Union[Iterable, float, int]) -> ndarray:
+    def __call__(self, ws: Union[IntFloatConstructedOneDimensionNdarray, ndarray]) -> ndarray:
         ws = IntFloatConstructedOneDimensionNdarray(ws)
-        func = self.call_func()
-        return func(ws, self.a, self.d, self.b_1, self.b_2, self.c_1, self.c_2, self.g_1, self.g_2)
+        return self.call_static_func()(ws, *self.params)
 
-    @staticmethod
-    def _params_constraints() -> OrderedDict:
-        constraints = OrderedDict(
+    def _loss_func(self, wind_speed, *, focal_error=None) -> Callable:
+        if wind_speed is None:
+            wind_speed = self.power_curve_look_up_table[:, 0]
+            target = self.power_curve_look_up_table[:, 1]
+        else:
+            target = super().__call__(wind_speed)
+
+        def func(params_array):
+            model_output = self.call_static_func()(wind_speed, *params_array)
+            # focal loss
+            error = model_output - target
+            if focal_error:
+                focal_index = np.abs(error) > focal_error
+                if np.sum(focal_index) == 0:
+                    focal_index = np.full(error.shape, True)
+            else:
+                focal_index = np.full(error.shape, True)
+            return float(np.sqrt(np.mean(error[focal_index] ** 2)))
+
+        return func
+
+    @property
+    def params(self) -> ndarray:
+        params_list = []
+        for this_param in self.ordered_params:
+            exec(f"params_list.append(self.{this_param})")
+        return np.array(params_list)
+
+    def update_params(self, *args, **kwargs):
+        for i, this_param in enumerate(self.ordered_params):
+            if args.__len__() == self.ordered_params.__len__():
+                exec(f"self.{this_param} = args[{i}]")
+            else:
+                exec(f"self.{this_param} = float({kwargs}.get('{this_param}')) "
+                     f"if {kwargs}.get('{this_param}') is not None else None")
+
+    @property
+    def _params_constraints(self) -> OrderedDict:
+        constraints = dict(
             [
                 ('a', [0.9, 1.1]),
                 ('d', [-0.1, 0.1]),
@@ -497,54 +554,129 @@ class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
                 ('g_2', [float_eps, 30.0]),
             ]
         )
+        constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])
         return constraints
 
     def _params_init(self):
-        constraints = self._params_constraints()
-        type(constraints)
-        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
-            source_code = f"self.{this_param} = (" \
-                          f"constraints['{this_param}'][0] + constraints['{this_param}'][-1]" \
-                          f") / 2"
+        for this_param in self.ordered_params:
+            source_code = f"self.{this_param} = (self._params_constraints['{this_param}'][0] + " \
+                          f"self._params_constraints['{this_param}'][-1]) / 2"
             exec(source_code)
+        return self.params
 
-    def _loss_func(self) -> Callable:
-        def func(x):
-            target = self.power_curve_look_up_table[:, 1]
-            model_output = self.call_func()(self.power_curve_look_up_table[:, 0], *x)
+    def fit(self, *, ga_algorithm_param: dict = None,
+            params_init_scheme: str,
+            run_n_times: int = 3,
+            save_to_file_path: Path = None,
+            wind_speed: Union[IntFloatConstructedOneDimensionNdarray, ndarray] = None,
+            focal_error: Union[int, float] = None):
+        """
+        Use GA to fit the 8PL PC.
+        :param ga_algorithm_param: The parameters of GA algorithm
+        :param params_init_scheme: Can be either 'self' or 'average',
+        'self' means to use current self.params to initialise GA;
+        'average' means to use the average of boundaries of constraints to initialise GA
 
-            return float(np.sqrt(np.nanmean((target - model_output) ** 2)))
+        :param run_n_times: run total run_n_times times
+        :param save_to_file_path
+        :param wind_speed: Only fit the curve for this wind speed
+        :param focal_error
+        :return:
+        """
+        # %% Prepare the parameters of GA algorithm and the initial values for fitting
+        wind_speed = IntFloatConstructedOneDimensionNdarray(wind_speed)
+        ga_algorithm_param = ga_algorithm_param or {}
+        if params_init_scheme == 'self':
+            if any([this_param is None for this_param in self.params]):
+                raise Exception("To use 'self' in 'params_init_scheme', all params must not be None. "
+                                "Otherwise, please use 'average'")
+            initialised_params = self.params
+        elif params_init_scheme == 'average':
+            initialised_params = self._params_init()
+        else:
+            raise ValueError("'params_init_scheme' can either be 'self' or 'average'")
 
-        return func
+        # %% Check if any current 8PL PC param is not None
+        if any([this_param is not None for this_param in self.params]):
+            warnings.warn("Existing params may be overwritten", UserWarning)
 
-    def fit(self, **kwargs):
-        # %% check
-        for this_param in ('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2'):
-            source_code = f"if self.{this_param} is not None: " \
-                          f"warnings.warn(\"\'{this_param}\' will be overwritten\", UserWarning)"
-            exec(source_code)
-        constraints = self._params_constraints()
-        self._params_init()
-
-        algorithm_param = {'max_num_iteration': 8000,
-                           'population_size': 100,
-                           'mutation_probability': 0.1,
-                           'elit_ratio': 0.01,
-                           'crossover_probability': 0.5,
-                           'parents_portion': 0.3,
-                           'crossover_type': 'uniform',
-                           'max_iteration_without_improv': 800}
-
-        ga_model = ga(function=self._loss_func(),
-                      dimension=8,
+        # %% Init GA obj
+        default_algorithm_param = Signature.from_callable(ga.__init__).parameters['algorithm_parameters'].default
+        ga_algorithm_param = dict(ChainMap(ga_algorithm_param, default_algorithm_param))
+        ga_model = ga(function=self._loss_func(wind_speed, focal_error=focal_error),
+                      dimension=self.params.__len__(),
                       variable_type='real',
-                      variable_boundaries=np.array(list(constraints.values())),
-                      algorithm_parameters=algorithm_param)
-        ga_model.run()
-        # Update 8PL PC
-        for i, this_param in enumerate(('a', 'd', 'b_1', 'b_2', 'c_1', 'c_2', 'g_1', 'g_2')):
-            source_code = f"self.{this_param} = ga_model.best_variable[{i}]"
+                      variable_boundaries=np.array(list(self._params_constraints.values())),
+                      algorithm_parameters=ga_algorithm_param)
+
+        # %% Run GA and save the results
+        ga_model_run_results = []
+        for _ in range(run_n_times):
+            ga_model.run(init_solo=initialised_params)
+            ga_model_run_results.append(ga_model.output_dict)
+            initialised_params = ga_model.best_variable  # This will initialise the next GA using the current best
+            if save_to_file_path:
+                save_pkl_file(save_to_file_path, ga_model_run_results)
+
+        # %% Update 8PL PC
+        for this_param_index, this_param in enumerate(self.ordered_params):
+            source_code = f"self.{this_param} = ga_model.best_variable[{this_param_index}]"  # The last is the best
             exec(source_code)
+
+        return ga_model_run_results
+
+    def plot(self, *,
+             ws: ndarray = None,
+             plot_region_boundary: bool = False,
+             ax=None,
+             mode='continuous',
+             plot_recordings_and_mob: bool = True,
+             **kwargs):
+        if all((self.wind_speed_recording is not None,
+                self.active_power_output_recording is not None,
+                plot_recordings_and_mob)):
+            passed_sig = Signature.from_callable(PowerCurveByMethodOfBins.plot).parameters.keys()
+            safe_locals = locals()
+            passed_args = {key: safe_locals[key] for key in passed_sig if (key != 'self' and key != 'kwargs')}
+
+            ax = PowerCurveByMethodOfBins(wind_speed_recording=self.wind_speed_recording,
+                                          active_power_output_recording=self.active_power_output_recording,
+                                          cal_region_boundary=False).plot(**passed_args)
+        else:
+            ax = ax
+        return super(PowerCurveByMethodOfBins, self).plot(ws, plot_region_boundary, ax, mode=mode, **kwargs)
+
+
+class PowerCurveFittedBy5PL(PowerCurveFittedBy8PL):
+    linestyle = '--'
+    color = 'darkorange'
+    label = '5PL PC'
+    ordered_params = ('a', 'd', 'b', 'c', 'g')
+
+    __slots__ = ('a', 'd', 'b', 'c', 'g')
+
+    @property
+    def _params_constraints(self) -> OrderedDict:
+        constraints = dict(
+            [
+                ('a', [0.95, 1.05]),
+                ('d', [-0.05, 0.05]),
+                ('b', [-20.0, 0]),
+                ('c', [float_eps, 20.0]),
+                ('g', [float_eps, 20.0]),
+            ]
+        )
+        constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])
+        return constraints
+
+    @classmethod
+    def call_static_func(cls) -> Callable:
+        source = f"def static_func(x, {', '.join(cls.ordered_params)}):\n" \
+                 f"    output = d + (a - d) / np.power(1 + np.power(x / c, b), g)\n" \
+                 f"    return np.array(output)"
+        exec(source, globals())
+
+        return globals()['static_func']
 
 
 if __name__ == '__main__':
