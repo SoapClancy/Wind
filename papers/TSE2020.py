@@ -1,5 +1,5 @@
 from Ploting.fast_plot_Func import *
-from PowerCurve_Class import PowerCurveByMfr, PowerCurveFittedBy5PL
+from PowerCurve_Class import PowerCurveByMfr, PowerCurveFittedBy5PLF
 from File_Management.load_save_Func import load_pkl_file
 from File_Management.path_and_file_management_Func import try_to_find_file
 from project_path_Var import project_path_
@@ -12,9 +12,9 @@ def fit_plot_and_summary_all_mfr_pc_in_all_density(mode: str):
     mfr_pc = PowerCurveByMfr.init_all_instances_in_docs(cut_in_ws=3)
     error_df = pd.DataFrame(index=[x.air_density for x in mfr_pc],
                             columns=('a',
+                                     'd',
                                      'b',
                                      'c',
-                                     'd',
                                      'g',
                                      'rmse',
                                      'mae',
@@ -23,9 +23,9 @@ def fit_plot_and_summary_all_mfr_pc_in_all_density(mode: str):
     for i, this_mfr_pc in enumerate(mfr_pc):
         # Fitting results' saving path
         save_to_file_path = project_path_ / f"Data/Results/PowerCurve/Mfr_fittings_{this_mfr_pc.air_density}.pkl"
-        this_mfr_pc_to_fit = PowerCurveFittedBy5PL(wind_speed_recording=this_mfr_pc.mfr_ws,
-                                                   active_power_output_recording=this_mfr_pc.mfr_p,
-                                                   interp_for_high_resol=False)
+        this_mfr_pc_to_fit = PowerCurveFittedBy5PLF(wind_speed_recording=this_mfr_pc.mfr_ws,
+                                                    active_power_output_recording=this_mfr_pc.mfr_p,
+                                                    interp_for_high_resol=False)
         # If there are any fitting results in the saving path, then they can be used as initials
         if try_to_find_file(save_to_file_path):
             this_mfr_pc_to_fit.update_params(*load_pkl_file(save_to_file_path)[-1]['variable'])  # The last is the best
@@ -38,7 +38,7 @@ def fit_plot_and_summary_all_mfr_pc_in_all_density(mode: str):
             this_mfr_pc_to_fit.fit(ga_algorithm_param={'max_num_iteration': 10000,
                                                        'max_iteration_without_improv': 1000},
                                    params_init_scheme=params_init_scheme,
-                                   run_n_times=120,
+                                   run_n_times=360,
                                    wind_speed=np.arange(0, 25, 0.1),
                                    focal_error=0.005,
                                    save_to_file_path=save_to_file_path)

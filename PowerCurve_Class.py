@@ -464,10 +464,10 @@ class PowerCurveByMethodOfBins(PowerCurve):
         return super().plot(ws, plot_region_boundary, ax, mode=mode, **kwargs)
 
 
-class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
+class PowerCurveFittedBy8PLF(PowerCurveByMethodOfBins):
     linestyle = '--'
     color = 'darkorange'
-    label = '8PL PC'
+    label = '8PLF PC'
     ordered_params = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
 
     __slots__ = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
@@ -483,10 +483,10 @@ class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
                  active_power_output_recording: ndarray = None,
                  *, interp_for_high_resol: bool = True,
                  **kwargs):
-        super(PowerCurveFittedBy8PL, self).__init__(wind_speed_recording=wind_speed_recording,
-                                                    active_power_output_recording=active_power_output_recording,
-                                                    interp_for_high_resol=interp_for_high_resol,
-                                                    cal_region_boundary=False)
+        super(PowerCurveFittedBy8PLF, self).__init__(wind_speed_recording=wind_speed_recording,
+                                                     active_power_output_recording=active_power_output_recording,
+                                                     interp_for_high_resol=interp_for_high_resol,
+                                                     cal_region_boundary=False)
         self.update_params(**kwargs)
 
     @classmethod
@@ -647,10 +647,10 @@ class PowerCurveFittedBy8PL(PowerCurveByMethodOfBins):
         return super(PowerCurveByMethodOfBins, self).plot(ws, plot_region_boundary, ax, mode=mode, **kwargs)
 
 
-class PowerCurveFittedBy5PL(PowerCurveFittedBy8PL):
+class PowerCurveFittedBy5PLF(PowerCurveFittedBy8PLF):
     linestyle = '--'
     color = 'darkorange'
-    label = '5PL PC'
+    label = '5PLF PC'
     ordered_params = ('a', 'd', 'b', 'c', 'g')
 
     __slots__ = ('a', 'd', 'b', 'c', 'g')
@@ -659,11 +659,11 @@ class PowerCurveFittedBy5PL(PowerCurveFittedBy8PL):
     def _params_constraints(self) -> OrderedDict:
         constraints = dict(
             [
-                ('a', [0.95, 1.05]),
-                ('d', [-0.05, 0.05]),
-                ('b', [-20.0, 0]),
-                ('c', [float_eps, 20.0]),
-                ('g', [float_eps, 20.0]),
+                ('a', [0.95, 1.02]),
+                ('d', [-0.02, 0.02]),
+                ('b', [-20.0, -5.]),
+                ('c', [10., 15.]),
+                ('g', [float_eps, 0.5]),
             ]
         )
         constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])

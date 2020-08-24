@@ -14,7 +14,7 @@ from Ploting.fast_plot_Func import *
 from TimeSeries_Class import TimeSeries, merge_two_time_series_df
 import re
 from File_Management.path_and_file_management_Func import try_to_find_file
-from PowerCurve_Class import PowerCurveFittedBy8PL
+from PowerCurve_Class import PowerCurveFittedBy8PLF
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 
@@ -206,7 +206,7 @@ if __name__ == '__main__':
     # temp_func()
     test_wf = create_dalry_wind_farm_obj_using_wf_filling_missing_old()
     test_pc = test_wf.power_curve_by_method_of_bins()
-    test_pc = PowerCurveFittedBy8PL.init_from_power_curve_by_method_of_bins(test_pc)
+    test_pc = PowerCurveFittedBy8PLF.init_from_power_curve_by_method_of_bins(test_pc)
     test_pc.update_params(*[1.0, -6.06147393e-03, -9.784173449e+00, 2.50094859e+01,
                             1.1163476e+01, 2.6918891e+01, 2.5509312e-01, .25560337e+00])
     test_pc.fit(ga_algorithm_param={'max_num_iteration': 100,
