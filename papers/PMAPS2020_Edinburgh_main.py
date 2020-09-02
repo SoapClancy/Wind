@@ -5,7 +5,7 @@ __copyright__   = "Copyright 2020, Mingzhe Zou"
 __email__ = "mingzhe.zou@ed.ac.uk"
 """
 import pandas as pd
-from project_path_Var import project_path_
+from project_utils import project_path_
 import numpy as np
 from numpy import ndarray
 import re

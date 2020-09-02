@@ -1,6 +1,6 @@
 from WT_WF_Class import WF, WT
 import pandas as pd
-from project_path_Var import project_path_
+from project_utils import project_path_
 import numpy as np
 from numpy import ndarray
 import datetime
@@ -15,6 +15,7 @@ from TimeSeries_Class import TimeSeries, merge_two_time_series_df
 import re
 from File_Management.path_and_file_management_Func import try_to_find_file
 from PowerCurve_Class import PowerCurveFittedBy8PLF
+from typing import Tuple
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 
@@ -110,7 +111,7 @@ def load_weather_data():
     return weather_data
 
 
-def load_raw_wt_from_txt_file_and_temperature_from_csv():
+def load_raw_wt_from_txt_file_and_temperature_from_csv() -> Tuple[WT, ...]:
     wind_turbines = []
     files = list_all_specific_format_files_in_a_folder_path(project_path_ / 'Data/Raw_measurements/Darly/', 'txt',
                                                             order='')

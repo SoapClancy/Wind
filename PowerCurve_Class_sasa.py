@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 import numpy as np
 from typing import Union, Tuple, Iterator, Iterable, Callable
 from Ploting.fast_plot_Func import *
-from project_utils import WS_POUT_2D_PLOT_KWARGS
+from project_utils import project_path_
 from scipy.io import loadmat
 import pandas as pd
 from Data_Preprocessing import float_eps
@@ -37,8 +37,9 @@ class PowerCurve(metaclass=ABCMeta):
     rated_active_power_output = 3000  # [kW]
     linestyle = ''  # type:str
     color = ''  # type:str
+    label = ''  # type:str
 
-    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary', 'label')
+    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary')
 
     @abstractmethod
     def __call__(self, ws: Union[Iterable, float, int]):
@@ -101,15 +102,20 @@ class PowerCurve(metaclass=ABCMeta):
         ax = self.__plot_region_boundary(ax) if plot_region_boundary else ax
         ws = ws if ws is not None else np.arange(0, 29.5, 0.01)
         active_power_output = self(ws)
-        kwargs = dict(ChainMap(kwargs,
-                               {'linestyle': self.linestyle,
-                                'color': self.color,
-                                'label': self.label},
-                               WS_POUT_2D_PLOT_KWARGS))
         if mode == 'continuous':
-            return series(ws, active_power_output, ax, **kwargs)
+            return series(ws, active_power_output, ax,
+                          linestyle=self.linestyle, color=self.color, label=self.label,
+                          y_lim=(-0.05, 1.05),
+                          x_lim=(-0.05, 29.5),
+                          x_label='Wind Speed [m/s]', y_label='Active Power Output [p.u.]',
+                          **kwargs)
         elif mode == 'discrete':
-            return scatter(ws, active_power_output, ax, **kwargs)
+            return scatter(ws, active_power_output, ax,
+                           color='r', marker='+', s=32, label=self.label,
+                           y_lim=(-0.05, 1.05),
+                           x_lim=(-0.05, 29.5),
+                           x_label='Wind Speed [m/s]', y_label='Active Power Output [p.u.]',
+                           **kwargs)
         else:
             raise ValueError("'mode' should be either 'continuous' or 'discrete'")
 
@@ -117,8 +123,9 @@ class PowerCurve(metaclass=ABCMeta):
 class PowerCurveByMfr(PowerCurve):
     linestyle = '-.'
     color = (0.64, 0.08, 0.18)
+    label = 'Mfr-PC'
 
-    __slots__ = ('mfr_ws', 'mfr_p', 'air_density', 'label')
+    __slots__ = ('mfr_ws', 'mfr_p', 'air_density')
 
     def __init__(self,
                  air_density: Union[int, float, str] = None,
@@ -146,8 +153,6 @@ class PowerCurveByMfr(PowerCurve):
                                      [0],
                                      [0])) / self.rated_active_power_output
         self.air_density = air_density
-        # self.label = 'Mfr-PC\n(' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$' + ')'
-        self.label = 'Mfr-PC'
 
     @classmethod
     def init_multiple_instances(cls, air_density: ndarray, **kwargs) -> tuple:
@@ -213,7 +218,7 @@ class PowerCurveByMfr(PowerCurve):
         if return_percentiles is not None:
             return_percentiles = StrOneDimensionNdarray(return_percentiles)
             return_percentiles = UncertaintyDataFrame(
-                index=np.append(return_percentiles, ['mean', 'std.']),
+                index=np.append(return_percentiles, 'mean'),
                 columns=range(len(high_resol_wind))
             )
         # Numba type should be determined so it can compile. Dynamic is not allowed
@@ -265,9 +270,8 @@ class PowerCurveByMfr(PowerCurve):
                 # The reason not using @guvectorize decorating np.percentile is it will actually be slower...
                 return_percentiles[this_high_resol_wind_index] = np.concatenate(
                     (np.percentile(this_high_resol_pout_results,
-                                   return_percentiles.index.values[:-2].astype(float)),
-                     np.mean(this_high_resol_pout_results, keepdims=True),
-                     np.std(this_high_resol_pout_results, keepdims=True))
+                                   return_percentiles.index.values[:-1].astype(float)),
+                     np.mean(this_high_resol_pout_results, keepdims=True))
                 )
             else:
                 results.append(this_high_resol_pout_results)
@@ -655,8 +659,8 @@ class PowerCurveFittedBy5PLF(PowerCurveFittedBy8PLF):
     def _params_constraints(self) -> OrderedDict:
         constraints = dict(
             [
-                ('a', [0.95, 1.02]),
-                ('d', [-0.02, 0.02]),
+                ('a', [1 - float_eps, 1 + float_eps]),
+                ('d', [0 - float_eps, 0 + float_eps]),
                 ('b', [-20.0, -5.]),
                 ('c', [10., 15.]),
                 ('g', [float_eps, 0.5]),

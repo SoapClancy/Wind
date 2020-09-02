@@ -1,14 +1,8 @@
-import numpy
-from numpy import ndarray
-
-from Data_Preprocessing import float_eps
 from Regression_Analysis.DeepLearning_Class import datetime_one_hot_encoder, MatlabLSTM, \
     prepare_data_for_nn
 import numpy as np
 import pandas as pd
-from numpy import ndarray
 from Time_Processing.format_convert_Func import datetime64_ndarray_to_datetime_tuple, np_datetime64_to_datetime
-from project_path_Var import project_path_
 from File_Management.load_save_Func import load_exist_npy_file_otherwise_run_and_save, save_npy_file, \
     load_exist_pkl_file_otherwise_run_and_save, load_npy_file, load_pkl_file
 from BivariateAnalysis_Class import BivariateOutlier, Bivariate, MethodOfBins
@@ -17,7 +11,7 @@ from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike,
     DeterministicUnivariateProbabilisticModel
 from typing import Union, Tuple, List, Iterable
 from BivariateAnalysis_Class import Bivariate, MethodOfBins
-from Ploting.fast_plot_Func import series, hist, scatter, scatter_density
+from Ploting.fast_plot_Func import *
 from PowerCurve_Class import PowerCurveByMethodOfBins, PowerCurve, PowerCurveByMfr
 from Filtering.simple_filtering_Func import linear_series_outlier, out_of_range_outlier, \
     change_point_outlier_by_sliding_window_and_interquartile_range
@@ -30,55 +24,61 @@ from TimeSeries_Class import SynchronousTimeSeriesData
 import datetime
 from Time_Processing.Season_Enum import SeasonTemplate1
 from enum import Enum
-import os
-import random
 from PhysicalInstance_Class import PhysicalInstanceDataFrame, PhysicalInstanceSeries, PhysicalInstance
 from pathlib import Path
-from inspect import Parameter, Signature
-import inspect
+from project_utils import project_path_, WS_POUT_SCATTER_ALPHA, WS_POUT_2D_PLOT_KWARGS, WS_POUT_SCATTER_SIZE
+from collections import ChainMap
 import warnings
-from numbers import Number
+import re
 
 
-class WT(PhysicalInstanceDataFrame):
+class WTandWFBase(PhysicalInstanceDataFrame):
     results_path = project_path_ / 'Data/Results/'  # type: Path
-    cut_in_wind_speed = 4
-    rated_wind_speed = 18
-    cut_out_wind_speed = 25
-    rated_active_power_output = 3000
 
-    __slots__ = PhysicalInstanceDataFrame.__slots__
+    __slots__ = ("cut_in_wind_speed", "rated_wind_speed", "cut_out_wind_speed", "rated_active_power_output")
 
     @property
     def _constructor(self):
-        return super(WT, self)._constructor
+        return super()._constructor
 
     @property
     def _constructor_expanddim(self):
-        return super(WT, self)._constructor_expanddim
+        return super()._constructor_expanddim
 
     @property
     def _constructor_sliced(self):
-        return super(WT, self)._constructor_sliced
+        return super()._constructor_sliced
+
+    def __init__(self, *args, cut_in_wind_speed=4, cut_out_wind_speed=25, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cut_in_wind_speed = cut_in_wind_speed
+        self.cut_out_wind_speed = cut_out_wind_speed
 
     def plot(self, **kwargs):
         return scatter(self['wind speed'].values,
-                       self['active power output'].values,
-                       color='b',
-                       x_label='Wind speed [m/s]',
-                       y_label='Active power output [kW]',
-                       **kwargs)
+                       self['active power output'].values / self.rated_active_power_output,
+                       **dict(ChainMap(kwargs, WS_POUT_2D_PLOT_KWARGS,
+                                       {'alpha': WS_POUT_SCATTER_ALPHA,
+                                        's': WS_POUT_SCATTER_SIZE})))
 
-    def power_curve_by_method_of_bins(self) -> PowerCurveByMethodOfBins:
-        pass
+
+class WT(WTandWFBase):
+
+    def __init__(self, *args, rated_active_power_output=3000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rated_active_power_output = rated_active_power_output
 
     def get_current_season(self, season_template: Enum = SeasonTemplate1) -> tuple:
+        # TODO Deprecated
+        warnings.warn("Deprecated", DeprecationWarning)
         synchronous = SynchronousTimeSeriesData(self.measurements,
                                                 self.outlier_category,
                                                 self.outlier_category_detailed)
         return synchronous.get_current_season(season_template=season_template)
 
     def do_truncate(self, start_time: datetime.datetime = None, end_time: datetime.datetime = None):
+        # TODO Deprecated
+        warnings.warn("Deprecated", DeprecationWarning)
         synchronous = SynchronousTimeSeriesData(self.measurements,
                                                 self.outlier_category,
                                                 self.outlier_category_detailed)
@@ -88,6 +88,8 @@ class WT(PhysicalInstanceDataFrame):
         )
 
     def do_truncate_by_season(self, season_to_be_queried: str, season_template: Enum = SeasonTemplate1):
+        # TODO Deprecated
+        warnings.warn("Deprecated", DeprecationWarning)
         synchronous = SynchronousTimeSeriesData(self.measurements,
                                                 self.outlier_category,
                                                 self.outlier_category_detailed)
@@ -675,49 +677,42 @@ class WT(PhysicalInstanceDataFrame):
         return out_of_range_outlier(self.measurements[data_name].values, lower_bound, upper_bound)
 
 
-class WF(PhysicalInstanceDataFrame):
-    results_path = project_path_ / 'Data/Results/'  # type: Path
-
-    __slots__ = ("cut_in_wind_speed", "rated_wind_speed", "cut_out_wind_speed", "rated_active_power_output",)
-
-    @property
-    def _constructor(self):
-        return super(WF, self)._constructor
-
-    @property
-    def _constructor_expanddim(self):
-        return super(WF, self)._constructor_expanddim
-
-    @property
-    def _constructor_sliced(self):
-        return super(WF, self)._constructor_sliced
-
-    def __init__(self, *args,
-                 obj_name: str,
-                 predictor_names: Iterable[str],
-                 dependant_names: Iterable[str],
-                 cut_in_wind_speed: Union[int, float] = 4,
-                 rated_wind_speed: Union[int, float] = 18,
-                 cut_out_wind_speed: Union[int, float] = 25,
-                 rated_active_power_output: Union[int, float] = None,
-                 **kwargs):
-        super(WF, self).__init__(*args,
-                                 obj_name=obj_name,
-                                 predictor_names=predictor_names,
-                                 dependant_names=dependant_names,
-                                 **kwargs)
-        self.cut_in_wind_speed = cut_in_wind_speed
-        self.rated_wind_speed = rated_wind_speed
-        self.cut_out_wind_speed = cut_out_wind_speed
+class WF(WTandWFBase):
+    def __init__(self, *args, rated_active_power_output: Union[int, float], **kwargs):
+        super().__init__(*args, **kwargs)
         self.rated_active_power_output = rated_active_power_output
 
-    def plot(self, **kwargs):
-        return scatter(self['wind speed'].values,
-                       self['active power output'].values,
-                       color='b',
-                       x_label='Wind speed [m/s]',
-                       y_label='Active power output [p.u.]',
-                       **kwargs)
+    @classmethod
+    def init_from_wind_turbine_instances(cls, wind_turbine_instances: Iterable[WT], *, obj_name: str):
+        """
+        To initialise a WF instance from a group of WT instances.
+        Can only work on averaging WS and Pout.
+        :return:
+        """
+        wind_farm_df = pd.DataFrame()
+        rated_active_power_output = []
+        for i, this_wind_turbine in enumerate(wind_turbine_instances):
+            rated_active_power_output.append(this_wind_turbine.rated_active_power_output)
+            wind_farm_df = pd.merge(wind_farm_df, this_wind_turbine.pd_view()[['wind speed', 'active power output']],
+                                    how='outer', left_index=True, right_index=True,
+                                    suffixes=(f'_WT{i}', f'_WT{i + 1}'))
+        # Adjust to multi index, so the indexing will be easy
+        new_columns = pd.MultiIndex.from_arrays([[re.findall(r'.*(?=_)', x)[0] for x in wind_farm_df.columns],
+                                                 [re.findall(r'(?<=_).*', x)[0] for x in wind_farm_df.columns]],
+                                                names=('Physical Quantity', 'WT No.'))
+        wind_farm_df.columns = new_columns
+        # Averaging
+        # Note that the treatment for WS and Pout are different
+        # For Pout, equivalent, the non-missing values are summed up and divided by the number of WTs in the WF
+        # For WS, equivalent, the non-missing values are averaged directly
+        wind_farm_df['active power output'] = wind_farm_df['active power output'].fillna(value=0)
+        wind_farm_df['active power output'] *= wind_farm_df['active power output'].shape[1]
+        wind_farm_instance = cls(wind_farm_df.mean(1, level='Physical Quantity', skipna=True),
+                                 rated_active_power_output=sum(rated_active_power_output),
+                                 obj_name=obj_name,
+                                 predictor_names=('wind speed',),
+                                 dependant_names=('active power output',))
+        return wind_farm_instance
 
     def power_curve_by_method_of_bins(self, cal_region_boundary: bool = False) -> PowerCurveByMethodOfBins:
         return PowerCurveByMethodOfBins(wind_speed_recording=self['wind speed'].values,
@@ -1087,6 +1082,7 @@ if __name__ == '__main__':
         obj_name='tt_name',
         predictor_names=('tt_predictor_names',),
         dependant_names=('tt_dependant_names',),
+        rated_active_power_output=3000
     )
-    print(tt)
+    # print(tt)
     cc = tt[0]
