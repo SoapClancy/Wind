@@ -108,7 +108,7 @@ def for_iet_paper_wd_from_ws(full_this_wind_turbine: WT):
                               predictor_var_name='WS',
                               dependent_var_name='WD',
                               bin_step=0.5)
-        wd_given_ws = bivariate.cal_mob_statistic(np.arange(0.05, 1., 0.05))
+        wd_given_ws = bivariate.cal_mob_statistic_eg_quantile(np.arange(0.05, 1., 0.05))
         savemat(path_ + this_season + '.mat', {'wd_given_ws': wd_given_ws})
 
         test_data = load_test_data_for_iet_paper(this_season_idx)

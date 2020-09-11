@@ -1,14 +1,9 @@
-import numpy
-from numpy.core._multiarray_umath import ndarray
-
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray
 from Ploting.fast_plot_Func import *
 import tensorflow as tf
 import tensorflow_probability as tfp
 from PowerCurve_Class import PowerCurveByMfr
-import pandas as pd
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
-from BivariateAnalysis_Class import MethodOfBins
 from typing import Iterator, Union
 
 
@@ -133,13 +128,13 @@ class Wind:
                         _this_trace = tfp.mcmc.sample_chain(num_results=num_of_results,
                                                             num_burnin_steps=0,
                                                             current_state=current_state,
-                                                            kernel=tfp.mcmc.RandomWalkMetropolis(
-                                                                this_recording_distribution.log_prob
-                                                            ),
-                                                            # kernel=tfp.mcmc.HamiltonianMonteCarlo(
-                                                            #     this_recording_distribution.log_prob,
-                                                            #     num_leapfrog_steps=2,
-                                                            #     step_size=0.5),
+                                                            # kernel=tfp.mcmc.RandomWalkMetropolis(
+                                                            #     this_recording_distribution.log_prob
+                                                            # ),
+                                                            kernel=tfp.mcmc.HamiltonianMonteCarlo(
+                                                                this_recording_distribution.log_prob,
+                                                                num_leapfrog_steps=4,
+                                                                step_size=2),
                                                             trace_fn=None)
                         return _this_trace
 
@@ -166,9 +161,9 @@ if __name__ == '__main__':
     wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
     this_wind_turbine = wind_turbines[0]
     rho = cal_air_density(
-        celsius_to_kelvin(this_wind_turbine.measurements['environmental temperature'].values),
-        this_wind_turbine.measurements['relative humidity'].values / 100,
-        this_wind_turbine.measurements['barometric pressure'].values * 100
+        celsius_to_kelvin(this_wind_turbine['environmental temperature'].values),
+        this_wind_turbine['relative humidity'].values / 100,
+        this_wind_turbine['barometric pressure'].values * 100
     )
     mfr_pc_instances = PowerCurveByMfr.init_multiple_instances(rho)
     for i, this_mfr_pc in enumerate(mfr_pc_instances):

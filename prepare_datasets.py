@@ -16,11 +16,18 @@ import re
 from File_Management.path_and_file_management_Func import try_to_find_file
 from PowerCurve_Class import PowerCurveFittedBy8PLF
 from typing import Tuple
+from collections import OrderedDict
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 
 
-def load_croatia_data(this_wind_farm_name: str = None):
+def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
+    wind_farm = OrderedDict()
+    # WF rated power mapper
+    wf_rated_power_mapper = {
+        'Zelengrad': 42
+    }
+
     for dir_name, subdir_list, file_list in os.walk(Croatia_RAW_DATA_PATH):
         # TODO
         if subdir_list:
@@ -31,8 +38,9 @@ def load_croatia_data(this_wind_farm_name: str = None):
                 continue
 
         wind_farm_name = Path(dir_name).name  # type: str
-        if try_to_find_file(''.join((wind_farm_name, '.png'))):
-            continue
+
+        # if try_to_find_file(''.join((wind_farm_name, '.png'))):
+        #     continue
 
         def one_variable_reading(file_postfix: str):
             one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)))
@@ -53,15 +61,28 @@ def load_croatia_data(this_wind_farm_name: str = None):
                                    how='outer',
                                    left_index=True,
                                    right_index=True)
+        wind_farm_basic.rename(columns={'WS': 'wind speed',
+                                        'POWER': 'active power output'},
+                               errors='raise',
+                               inplace=True)
 
-        scatter(wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 0].values,
-                wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 1].values / 42,
-                color='b',
-                x_label='Wind speed (m/s)',
-                x_lim=(-0.05, 28.5),
-                y_lim=(-0.005, 1.05),
-                y_label='Power output (p.u.)',
-                save_file_=wind_farm_name)
+        wind_farm[wind_farm_name] = WF(
+            wind_farm_basic,
+            obj_name=f'{wind_farm_name} WF',
+            rated_active_power_output=wf_rated_power_mapper[wind_farm_name],
+            predictor_names=('wind speed',),
+            dependant_names=('active power output',)
+        )
+
+        # scatter(wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 0].values,
+        #         wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 1].values / 42,
+        #         color='b',
+        #         x_label='Wind speed (m/s)',
+        #         x_lim=(-0.05, 28.5),
+        #         y_lim=(-0.005, 1.05),
+        #         y_label='Power output (p.u.)',
+        #         save_file_=wind_farm_name)
+        return wind_farm
 
 
 def convert_datetime_str_in_txt_to_datetime64(ts: ndarray, from_: str = 'txt'):
@@ -205,17 +226,18 @@ def load_high_resol_for_averaging_effects_analysis():
 
 if __name__ == '__main__':
     # temp_func()
-    test_wf = create_dalry_wind_farm_obj_using_wf_filling_missing_old()
-    test_pc = test_wf.power_curve_by_method_of_bins()
-    test_pc = PowerCurveFittedBy8PLF.init_from_power_curve_by_method_of_bins(test_pc)
-    test_pc.update_params(*[1.0, -6.06147393e-03, -9.784173449e+00, 2.50094859e+01,
-                            1.1163476e+01, 2.6918891e+01, 2.5509312e-01, .25560337e+00])
-    test_pc.fit(ga_algorithm_param={'max_num_iteration': 100,
-                                    'max_iteration_without_improv': 100},
-                params_init_scheme='self',
-                run_n_times=5)
-    test_pc.plot()
-    # load_croatia_data()
+    # test_wf = create_dalry_wind_farm_obj_using_wf_filling_missing_old()
+    # test_pc = test_wf.power_curve_by_method_of_bins()
+    # test_pc = PowerCurveFittedBy8PLF.init_from_power_curve_by_method_of_bins(test_pc)
+    # test_pc.update_params(*[1.0, -6.06147393e-03, -9.784173449e+00, 2.50094859e+01,
+    #                         1.1163476e+01, 2.6918891e+01, 2.5509312e-01, .25560337e+00])
+    # test_pc.fit(ga_algorithm_param={'max_num_iteration': 100,
+    #                                 'max_iteration_without_improv': 100},
+    #             params_init_scheme='self',
+    #             run_n_times=5)
+    # test_pc.plot()
+
+    tt = load_croatia_data('Zelengrad')
     # tt = load_raw_wt_from_txt_file_and_temperature_from_csv()
 
     # for i in tt:

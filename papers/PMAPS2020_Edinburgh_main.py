@@ -84,7 +84,7 @@ def find_extreme_wind_speed_for_rated_power(rated_power=2940, bin_step=0.5):
 
     # 建立Bivariate类，通过mob去寻找符合要求的wind speed bin：bin中的95%的power output都不低于rated power
     bivariate = Bivariate(measurements['Wind speed'].values, measurements.iloc[:, -1].values, bin_step=bin_step)
-    _95_percentile_in_mob = bivariate.cal_mob_statistic(np.array([0.95]))
+    _95_percentile_in_mob = bivariate.cal_mob_statistic_eg_quantile(np.array([0.95]))
     _95_percentile_in_mob_reach_rated_mask = _95_percentile_in_mob[:, -1] > rated_power
 
     min_wind_speed_bin_idx = bivariate.find_mob_key_according_to_mob_or_mob_fitting_like_dict(
@@ -125,9 +125,9 @@ def find_extreme_wind_speed_for_rated_power_sasa(rated_power=3000, bin_step=0.5)
     key = bivariate.find_mob_key_according_to_mob_or_mob_fitting_like_dict(23,
                                                                            bivariate.mob
                                                                            )['accurate_bin_key']
-    _5_percentile_in_mob = bivariate.cal_mob_statistic(np.array([0.05]))
+    _5_percentile_in_mob = bivariate.cal_mob_statistic_eg_quantile(np.array([0.05]))
     _5_percentile_in_mob *= 0.99
-    _95_percentile_in_mob = bivariate.cal_mob_statistic(np.array([0.95]))
+    _95_percentile_in_mob = bivariate.cal_mob_statistic_eg_quantile(np.array([0.95]))
     # ax = vlines(_5_percentile_in_mob[key, 1], color='k', linestyles=':',
     #             label='5$^\mathrm{th}$ percentile')
     # ax = vlines(_95_percentile_in_mob[key, 1], color='r', linestyles='-',

@@ -30,12 +30,13 @@ from project_utils import project_path_, WS_POUT_SCATTER_ALPHA, WS_POUT_2D_PLOT_
 from collections import ChainMap
 import warnings
 import re
+from Filtering.OutlierAnalyser_Class import DataCategoryNameMapper, DataCategoryData
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
     results_path = project_path_ / 'Data/Results/'  # type: Path
 
-    __slots__ = ("cut_in_wind_speed", "rated_wind_speed", "cut_out_wind_speed", "rated_active_power_output")
+    __slots__ = ("cut_in_wind_speed", "cut_out_wind_speed", "rated_active_power_output")
 
     @property
     def _constructor(self):
@@ -54,12 +55,44 @@ class WTandWFBase(PhysicalInstanceDataFrame):
         self.cut_in_wind_speed = cut_in_wind_speed
         self.cut_out_wind_speed = cut_out_wind_speed
 
-    def plot(self, **kwargs):
-        return scatter(self['wind speed'].values,
-                       self['active power output'].values / self.rated_active_power_output,
-                       **dict(ChainMap(kwargs, WS_POUT_2D_PLOT_KWARGS,
-                                       {'alpha': WS_POUT_SCATTER_ALPHA,
-                                        's': WS_POUT_SCATTER_SIZE})))
+    @property
+    def data_category_name_mapper(self) -> DataCategoryNameMapper:
+        meta = [["missing data", "missing", -1, "N/A"],
+                ["normal data", "normal", 0, "N/A"],
+                ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
+                ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
+                ["Low maximum Pout", "CAT-II", 3, "curtailment"],
+                ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
+                ["Scattered", "CAT-IV.a", 5, "averaging window or WT cut-out effects"],
+                ["Scattered", "CAT-IV.b", 6, "the others"],
+                ["Shifted PC", "CAT-V", 7, "WT Outages"]]
+
+        mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
+        mapper[:] = meta
+        return mapper
+
+    def plot(self, *,
+             ax=None,
+             plot_mfr: Iterable[PowerCurveByMfr] = None,
+             plot_scatter_pc: bool = False,
+             **kwargs):
+        ax = scatter(self['wind speed'].values,
+                     self['active power output'].values / self.rated_active_power_output,
+                     ax=ax,
+                     **{'alpha': WS_POUT_SCATTER_ALPHA,
+                        's': WS_POUT_SCATTER_SIZE,
+                        'color': 'royalblue'})
+        if plot_mfr:
+            for this_mfr_pc in plot_mfr:
+                ax = this_mfr_pc.plot(ax=ax)
+        if plot_scatter_pc:
+            ax = PowerCurveByMethodOfBins(self['wind speed'].values,
+                                          self['active power output'].values / self.rated_active_power_output).plot(
+                ax=ax,
+                plot_recording=False,
+                **dict(ChainMap(kwargs, WS_POUT_2D_PLOT_KWARGS))
+            )
+        return ax
 
 
 class WT(WTandWFBase):
@@ -67,6 +100,28 @@ class WT(WTandWFBase):
     def __init__(self, *args, rated_active_power_output=3000, **kwargs):
         super().__init__(*args, **kwargs)
         self.rated_active_power_output = rated_active_power_output
+
+    def outlier_detector(self) -> DataCategoryData:
+        category = super().outlier_detector()  # type: DataCategoryData
+        # %% CAT-I.a and CAT-I.b
+        cat_i_outlier_mask = self.data_category_inside_boundary({
+            'wind speed': (self.cut_in_wind_speed, self.cut_out_wind_speed),
+            'active power output': (-np.inf, self.rated_active_power_output * 0.01)})
+        category.data[cat_i_outlier_mask] = "CAT-I"
+        # %% CAT-II
+        cat_ii_outlier_mask = super().data_category_is_linearity('60T', general_linearity_error={
+            'wind speed': 0.1,
+            'active power output': self.rated_active_power_output * 0.001
+        })
+        cat_ii_outlier_mask = np.bitwise_and(
+            cat_ii_outlier_mask,
+            self.data_category_inside_boundary({
+                'wind speed': (self.cut_in_wind_speed, self.cut_out_wind_speed),
+                'active power output': (self.rated_active_power_output * 0.05, self.rated_active_power_output * 0.95)})
+        )
+        category.data[cat_ii_outlier_mask] = "CAT-II"
+
+        return category
 
     def get_current_season(self, season_template: Enum = SeasonTemplate1) -> tuple:
         # TODO Deprecated
@@ -478,7 +533,7 @@ class WT(WTandWFBase):
                            self.measurements['active power output'].values,
                            bin_step=0.5, first_bin_left_boundary=0, last_bin_left_boundary=28.5,
                            considered_data_mask_for_mob_calculation=mask_summer)
-        summer_mob_statistic = mob.cal_mob_statistic()
+        summer_mob_statistic = mob.cal_mob_statistic_eg_quantile()
         ax = mob.plot_mob_statistic(x_label='Wind speed (m/s)', y_label='Active power output (kW)',
                                     x_lim=(0, 29), y_lim=(-3000 * 0.0125, 3000 * 1.0125),
                                     scatter_color='g',
@@ -490,7 +545,7 @@ class WT(WTandWFBase):
                            self.measurements['active power output'].values,
                            bin_step=0.5, first_bin_left_boundary=0, last_bin_left_boundary=28.5,
                            considered_data_mask_for_mob_calculation=mask_winter)
-        winter_mob_statistic = mob.cal_mob_statistic()
+        winter_mob_statistic = mob.cal_mob_statistic_eg_quantile()
         mob.plot_mob_statistic(ax=ax, x_label='Wind speed (m/s)', y_label='Active power output (kW)',
                                x_lim=(0, 29), y_lim=(-3000 * 0.0125, 3000 * 1.0125),
                                scatter_color='b',
@@ -511,7 +566,7 @@ class WT(WTandWFBase):
                            self.measurements['active power output'].values,
                            bin_step=0.5, first_bin_left_boundary=0, last_bin_left_boundary=28.5,
                            considered_data_mask_for_mob_calculation=hottest_in_summer)
-        hottest_in_summer_mob_statistic = mob.cal_mob_statistic()
+        hottest_in_summer_mob_statistic = mob.cal_mob_statistic_eg_quantile()
         ax = mob.plot_mob_statistic(x_label='Wind speed (m/s)', y_label='Active power output (kW)',
                                     x_lim=(0, 29), y_lim=(-3000 * 0.0125, 3000 * 1.0125),
                                     scatter_color='g',
@@ -525,7 +580,7 @@ class WT(WTandWFBase):
                            self.measurements['active power output'].values,
                            bin_step=0.5, first_bin_left_boundary=0, last_bin_left_boundary=28.5,
                            considered_data_mask_for_mob_calculation=coldest_in_winter)
-        coldest_in_winter_mob_statistic = mob.cal_mob_statistic()
+        coldest_in_winter_mob_statistic = mob.cal_mob_statistic_eg_quantile()
         mob.plot_mob_statistic(ax=ax, x_label='Wind speed (m/s)', y_label='Active power output (kW)',
                                x_lim=(0, 29), y_lim=(-3000 * 0.0125, 3000 * 1.0125),
                                scatter_color='b',
@@ -654,7 +709,7 @@ class WT(WTandWFBase):
         """
         linear series outlier in series data
         """
-        return linear_series_outlier(self.measurements[data_name].values, 6, error)
+        return linear_series_outlier(self[data_name].values, 6, error)
 
     def __identify_interquartile_outlier(self):
         """

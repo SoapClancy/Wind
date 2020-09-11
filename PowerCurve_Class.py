@@ -6,7 +6,6 @@ from scipy.interpolate import interp1d
 import numpy as np
 from typing import Union, Tuple, Iterator, Iterable, Callable
 from Ploting.fast_plot_Func import *
-from project_utils import WS_POUT_2D_PLOT_KWARGS
 from scipy.io import loadmat
 import pandas as pd
 from Data_Preprocessing import float_eps
@@ -27,6 +26,7 @@ from inspect import Parameter, Signature
 import inspect
 from pathlib import Path
 from File_Management.load_save_Func import save_pkl_file
+from project_utils import *
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -35,10 +35,9 @@ class PowerCurve(metaclass=ABCMeta):
     restart_wind_speed = 20.  # [m/s]
 
     rated_active_power_output = 3000  # [kW]
-    linestyle = ''  # type:str
-    color = ''  # type:str
 
-    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary', 'label')
+    __slots__ = ('region_12_boundary', 'region_23_boundary', 'region_34_boundary', 'region_45_boundary',
+                 'label', 'color', 'linestyle')
 
     @abstractmethod
     def __call__(self, ws: Union[Iterable, float, int]):
@@ -115,14 +114,13 @@ class PowerCurve(metaclass=ABCMeta):
 
 
 class PowerCurveByMfr(PowerCurve):
-    linestyle = '-.'
-    color = (0.64, 0.08, 0.18)
-
     __slots__ = ('mfr_ws', 'mfr_p', 'air_density', 'label')
 
     def __init__(self,
                  air_density: Union[int, float, str] = None,
-                 *, cut_in_ws: Union[int, float] = None):
+                 *, cut_in_ws: Union[int, float] = None,
+                 color=(0.64, 0.08, 0.18),
+                 linestyle='-.'):
         if air_density is None:
             warnings.warn("'air_density' unspecified. Set air_density to 1.15."
                           "But this may lead to unrealistic manufacturer power curve."
@@ -147,7 +145,10 @@ class PowerCurveByMfr(PowerCurve):
                                      [0])) / self.rated_active_power_output
         self.air_density = air_density
         # self.label = 'Mfr-PC\n(' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$' + ')'
-        self.label = 'Mfr-PC'
+        # self.label = 'Mfr-PC (' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$)'
+        self.label = 'Mfr-PC ' + r'$\rho$' + '$_{' + f'{self.air_density}' + '}$'
+        self.color = color
+        self.linestyle = linestyle
 
     @classmethod
     def init_multiple_instances(cls, air_density: ndarray, **kwargs) -> tuple:
@@ -402,17 +403,16 @@ class PowerCurveByMfr(PowerCurve):
 
 
 class PowerCurveByMethodOfBins(PowerCurve):
-    linestyle = ':'
-    color = 'red'
-    label = 'MOB PC'
-
     __slots__ = ('wind_speed_recording', 'active_power_output_recording', 'power_curve_look_up_table')
 
     def __init__(self,
                  wind_speed_recording: ndarray,
                  active_power_output_recording: ndarray,
                  *, interp_for_high_resol: bool = True,
-                 cal_region_boundary: bool):
+                 cal_region_boundary: bool = False,
+                 color='fuchsia',
+                 linestyle='-',
+                 label='Scatters PC'):
         self.wind_speed_recording = wind_speed_recording
         self.active_power_output_recording = active_power_output_recording
         if interp_for_high_resol:
@@ -424,6 +424,9 @@ class PowerCurveByMethodOfBins(PowerCurve):
         if cal_region_boundary:
             self.region_12_boundary, self.region_23_boundary, self.region_34_boundary, self.region_45_boundary = \
                 self.cal_region_boundary()
+        self.color = color
+        self.linestyle = linestyle
+        self.label = label
 
     def __cal_power_curve_look_up_table(self) -> ndarray:
         """
@@ -436,7 +439,7 @@ class PowerCurveByMethodOfBins(PowerCurve):
         power_curve_look_up_table = MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                                                  bin_step=0.5,
                                                  first_bin_left_boundary=0,
-                                                 last_bin_left_boundary=29.5).cal_mob_statistic()
+                                                 last_bin_left_boundary=29.5).cal_mob_statistic_eg_quantile()
         power_curve_look_up_table_hi_resol[:, 1] = interp1d(
             np.concatenate((np.array([-100]), power_curve_look_up_table[:, 0], np.array([100]))),
             np.concatenate((np.array([0]), power_curve_look_up_table[:, 1], np.array([0]))))(
@@ -455,15 +458,14 @@ class PowerCurveByMethodOfBins(PowerCurve):
              plot_recording: bool = True,
              mode='continuous',
              **kwargs):
-        ax = scatter(self.wind_speed_recording, self.active_power_output_recording, ax=ax, color='royalblue',
-                     alpha=0.5) if plot_recording else ax
+        ax = scatter(self.wind_speed_recording, self.active_power_output_recording, ax=ax,
+                     **{'alpha': WS_POUT_SCATTER_ALPHA,
+                        's': WS_POUT_SCATTER_SIZE,
+                        'color': 'royalblue'}) if plot_recording else ax
         return super().plot(ws, plot_region_boundary, ax, mode=mode, **kwargs)
 
 
 class PowerCurveFittedBy8PLF(PowerCurveByMethodOfBins):
-    linestyle = '--'
-    color = 'darkorange'
-    label = '8PLF PC'
     ordered_params = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
 
     __slots__ = ('a', 'd', 'b_1', 'c_1', 'g_1', 'b_2', 'c_2', 'g_2')
@@ -478,11 +480,17 @@ class PowerCurveFittedBy8PLF(PowerCurveByMethodOfBins):
                  wind_speed_recording: ndarray = None,
                  active_power_output_recording: ndarray = None,
                  *, interp_for_high_resol: bool = True,
+                 color='darkorange',
+                 linestyle='--',
+                 label='8PLF PC',
                  **kwargs):
         super(PowerCurveFittedBy8PLF, self).__init__(wind_speed_recording=wind_speed_recording,
                                                      active_power_output_recording=active_power_output_recording,
                                                      interp_for_high_resol=interp_for_high_resol,
-                                                     cal_region_boundary=False)
+                                                     cal_region_boundary=False,
+                                                     color=color,
+                                                     linestyle=linestyle,
+                                                     label=label)
         self.update_params(**kwargs)
 
     @classmethod

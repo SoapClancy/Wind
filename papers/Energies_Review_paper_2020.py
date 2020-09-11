@@ -23,6 +23,7 @@ from Data_Preprocessing.float_precision_control_Func import limit_ndarray_max_an
 from Ploting.adjust_Func import adjust_lim_label_ticks
 from UnivariateAnalysis_Class import UnivariateGaussianMixtureModel, GaussianMixture
 from matplotlib import cm, colors
+from scipy.stats import norm
 
 # %% Global variables
 # choose manufacturer power curve
@@ -34,14 +35,16 @@ THIS_WIND_TURBINE = wind_turbines[0]
 wind_speed = THIS_WIND_TURBINE['wind speed'].values
 wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
 mob = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5)
-range_mask = np.bitwise_and(mob.array_of_bin_boundary[:, 1] >= 0,
+RANGE_MASK = np.bitwise_and(mob.array_of_bin_boundary[:, 1] >= 0,
                             mob.array_of_bin_boundary[:, 1] <= 30)
-WIND_SPEED_RANGE = mob.cal_mob_statistic(np.array([1.]))[range_mask, 0]
-WIND_SPEED_STD_RANGE = mob.cal_mob_statistic('mean')[range_mask, 1]
+WIND_SPEED_RANGE = mob.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
+WIND_SPEED_STD_RANGE = mob.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
+WIND_SPEED_STD_UCT = mob.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
 SIMULATION_RESOLUTION = 10
 SIMULATION_TRACES = 10_000_000
-SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.5, 0.5), '0.1')
-del wind_turbines, wind_speed, wind_speed_std, mob, range_mask
+SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
+
+del wind_turbines, wind_speed, wind_speed_std, mob
 
 
 def plot_raw_wind_turbine_data(_ax=None):
@@ -69,11 +72,12 @@ def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kw
     _ax = plot_from_uncertainty_like_dataframe(
         WIND_SPEED_RANGE,
         uncertainty_dataframe,
-        covert_to_str_one_dimensional_ndarray(np.arange(0, 50.5, 0.5), '0.1'),
+        covert_to_str_one_dimensional_ndarray(np.arange(0, 50, 0.5), '0.001'),
         ax=_ax,
         **kwargs
     )
-
+    _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(68).iloc[0] + uncertainty_dataframe(68).iloc[1]) / 2,
+                 ax=_ax, label='1' + r'$\sigma$' + ' %' + '\nrange mean', color='fuchsia', linestyle='--')
     return plot_mfr_pc(_ax)
 
 
@@ -81,38 +85,72 @@ def uncertainty_plot_25_75(uncertainty_dataframe: UncertaintyDataFrame, _ax=None
     _ax = plot_from_uncertainty_like_dataframe(
         WIND_SPEED_RANGE,
         uncertainty_dataframe,
-        covert_to_str_one_dimensional_ndarray(np.array([25.]), '0.1'),
+        covert_to_str_one_dimensional_ndarray(np.array([25.]), '0.001'),
         ax=_ax,
         **kwargs
     )
+    _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(50).iloc[0] + uncertainty_dataframe(50).iloc[1]) / 2,
+                 ax=_ax, label='25th-75th mean')
 
     return plot_mfr_pc(_ax)
 
 
 def uncertainty_plot_sigma(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kwargs):
-    _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
-                 color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
-    cmap = cm.get_cmap('bone')
+    uncertainty_dataframe.columns = WIND_SPEED_RANGE
+    # _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
+    #              color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
+    # cmap = cm.get_cmap('bone')
     # norm = colors.Normalize(vmin=0, vmax=int(lower_half_percentiles.size))
     _ax = plot_mfr_pc(_ax, y_lim=(-0.2, 1.2))
-    _ax = _ax.fill_between(WIND_SPEED_RANGE,
-                           uncertainty_dataframe.iloc[-2].values - uncertainty_dataframe.iloc[-1].values,
-                           uncertainty_dataframe.iloc[-2].values + uncertainty_dataframe.iloc[-1].values,
-                           facecolor='w',
-                           edgecolor='k',
-                           linewidth=0.25,
-                           # alpha=alpha,
-                           )
-        # (WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
-        #  color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
+    _ax = uncertainty_dataframe.sigma_percentage_plot(ax=_ax, **{'x_label': 'Wind Speed [m/s]',
+                                                                 'y_label': 'Active Power Output [p.u.]'})
+    # _ax = _ax.fill_between(WIND_SPEED_RANGE,
+    #                        uncertainty_dataframe.iloc[-2].values - uncertainty_dataframe.iloc[-1].values,
+    #                        uncertainty_dataframe.iloc[-2].values + uncertainty_dataframe.iloc[-1].values,
+    #                        facecolor='w',
+    #                        edgecolor='k',
+    #                        linewidth=0.25,
+    #                        # alpha=alpha,
+    #                        )
+    # (WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
+    #  color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
 
     return _ax
 
 
+# def plot_wind_speed_std():
+#     ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, marker='*', mec='r', ms=8,
+#                 x_label='Wind Speed [m/s]', y_label='Wind Speed Std. [m/s]',
+#                 x_lim=(-0.5, 30.5))
+#     return ax
+
 def plot_wind_speed_std():
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, marker='*', mec='r', ms=8,
-                x_label='Wind Speed [m/s]', y_label='Wind Speed Std. [m/s]',
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, color=(0, 1, 0), linestyle='--', label='Mean')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(0).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-',
+                color='orange', label='Median')
+
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-',
+                label='1' + r'$\sigma$' + ' %', color='grey')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-',
+                color='grey')
+
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[0].values[RANGE_MASK], ax=ax, linestyle='--',
+                label='2' + r'$\sigma$' + ' %', color='fuchsia')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[1].values[RANGE_MASK], ax=ax, linestyle='--',
+                color='fuchsia')
+
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-.',
+                label='3' + r'$\sigma$' + ' %', color='royalblue')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-.',
+                color='royalblue')
+    #
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[0].values[RANGE_MASK], ax=ax, linestyle=':',
+                label='4.5' + r'$\sigma$' + ' %', color='black')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[1].values[RANGE_MASK], ax=ax, linestyle=':',
+                color='black', x_label='Wind Speed [m/s]', y_label='Wind Speed Std. [m/s]',
                 x_lim=(-0.5, 30.5))
+    ax.set_ylim(-0.05, 8.6)
+    plt.gca().legend(ncol=4, loc='upper center', prop={'size': 10})
     return ax
 
 
@@ -256,7 +294,7 @@ def sasa_high_resol_check():
         _mob = MethodOfBins(np.repeat(ws, 60),
                             ws_high_resol.flatten(),
                             bin_step=0.5)
-        fake = _mob.cal_mob_statistic(np.array([0., 1.]))
+        fake = _mob.cal_mob_statistic_eg_quantile(np.array([0., 1.]))
         # nmksztsf
         stupid_ax = series(fake[:, 0], fake[:, 1], color=(0, 1, 0), label='Absolute min 0.1 Hz WS \nin a 10-min WS bin')
         stupid_ax = series(fake[:, 0], fake[:, 2], color='b', linestyle='--',
@@ -264,14 +302,14 @@ def sasa_high_resol_check():
                            x_label='10-min average wind speed [m/s]',
                            y_label='0.1 Hz Wind speed [m/s]',
                            x_lim=(-0.5, 30.5), title=key)
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
-                         FIXED_MFR_PC(_mob.cal_mob_statistic('mean')[:, 1]),
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
+                         FIXED_MFR_PC(_mob.cal_mob_statistic_eg_quantile('mean')[:, 1]),
                          color='k', label='Pout from average WS in the bin')
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
                          FIXED_MFR_PC(fake[:, 1]), color='b', linestyle='--',
                          label='Pout by absolute min 0.1 Hz WS \nin a 10-min WS bin',
                          ax=laji_ax)
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
                          FIXED_MFR_PC(fake[:, 2]), color=(0, 1, 0), linestyle='--',
                          label='Pout by absolute max 0.1 Hz WS \nin a 10-min WS bin',
                          ax=laji_ax,
@@ -302,14 +340,14 @@ def sasa_high_resol_check():
                            x_label='10-min average wind speed [m/s]',
                            y_label='0.1 Hz Wind speed [m/s]',
                            x_lim=(-0.5, 30.5), title=key)
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
-                         FIXED_MFR_PC(_mob.cal_mob_statistic('mean')[:, 1]),
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
+                         FIXED_MFR_PC(_mob.cal_mob_statistic_eg_quantile('mean')[:, 1]),
                          color='k', label='Pout from average WS in the bin')
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
                          FIXED_MFR_PC(stupid_unrealistic_bins[:, 0]), color='b', linestyle='--',
                          label='Pout by concurrent min 0.1 Hz WS \nin a 10-min WS bin',
                          ax=laji_ax)
-        laji_ax = series(_mob.cal_mob_statistic('mean')[:, 0],
+        laji_ax = series(_mob.cal_mob_statistic_eg_quantile('mean')[:, 0],
                          FIXED_MFR_PC(stupid_unrealistic_bins[:, 2]), color=(0, 1, 0), linestyle='--',
                          label='Pout by concurrent max 0.1 Hz WS \nin a 10-min WS bin',
                          ax=laji_ax,
@@ -341,7 +379,7 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new():
 
     simulated_pout = get_results()  # type: UncertaintyDataFrame
 
-    return uncertainty_plot(simulated_pout)
+    return uncertainty_plot_sigma(UncertaintyDataFrame(simulated_pout))
 
 
 def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old():
@@ -434,9 +472,9 @@ def demonstration_iec_standard():
 
 if __name__ == "__main__":
     ax_mine_new = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new()
-    # ax_mine_old = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old()
-    # ax_sasa = sasa_algorithm_to_cal_possible_pout_range()
-    # ax_sasa_pmaps = sasa_pmaps_to_cal_possible_pout_range()
-    # ax_iec_standard = demonstration_iec_standard()
-    ax_std = plot_wind_speed_std()
-    # ax_sasa_high_resol = sasa_high_resol_check()
+    #     # ax_mine_old = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old()
+    #     # ax_sasa = sasa_algorithm_to_cal_possible_pout_range()
+    #     # ax_sasa_pmaps = sasa_pmaps_to_cal_possible_pout_range()
+    #     # ax_iec_standard = demonstration_iec_standard()
+    # ax_std = plot_wind_speed_std()
+#     # ax_sasa_high_resol = sasa_high_resol_check()

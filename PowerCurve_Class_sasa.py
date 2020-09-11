@@ -440,7 +440,7 @@ class PowerCurveByMethodOfBins(PowerCurve):
         power_curve_look_up_table = MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                                                  bin_step=0.5,
                                                  first_bin_left_boundary=0,
-                                                 last_bin_left_boundary=29.5).cal_mob_statistic()
+                                                 last_bin_left_boundary=29.5).cal_mob_statistic_eg_quantile()
         power_curve_look_up_table_hi_resol[:, 1] = interp1d(
             np.concatenate((np.array([-100]), power_curve_look_up_table[:, 0], np.array([100]))),
             np.concatenate((np.array([0]), power_curve_look_up_table[:, 1], np.array([0]))))(

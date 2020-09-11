@@ -13,7 +13,30 @@ from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and
 from Data_Preprocessing.float_precision_control_Func import \
     covert_to_str_one_dimensional_ndarray
 from ConvenientDataType import UncertaintyDataFrame
-from Ploting.uncertainty_plot_Func import plot_from_uncertainty_like_dataframe
+from Ploting.adjust_Func import *
+
+########################################################################################################################
+"""
+This paper uses Dalry WF (especially its WT2 for individual WT analysis) and Zelengrad WF recordings
+"""
+
+MFR_PC_LIMIT = (PowerCurveByMfr(air_density='0.97'), PowerCurveByMfr(air_density='1.27',
+                                                                     color='lime',
+                                                                     linestyle='--'))
+DARLY_WIND_TURBINES = load_raw_wt_from_txt_file_and_temperature_from_csv()
+DARLY_WIND_TURBINE_2 = DARLY_WIND_TURBINES[1]  # type: WT
+# Set WT2 predictor_names
+DARLY_WIND_TURBINE_2.predictor_names = ('wind speed',)
+# DARLY_WIND_FARM = WF.init_from_wind_turbine_instances(DARLY_WIND_TURBINES, obj_name='Dalry')  # type: WF
+# ZELENGRAD_WIND_FARM = load_croatia_data('Zelengrad')['Zelengrad']  # type: WF
+# # Aggregate to 10 min
+# ZELENGRAD_WIND_FARM = ZELENGRAD_WIND_FARM.resample(
+#     '10T',
+#     resampler_obj_func_source_code="agg(lambda x: np.mean(x.values))"
+# )  # type: WF
+
+
+########################################################################################################################
 
 
 def fit_plot_and_summary_all_mfr_pc_in_all_density(mode: str):
@@ -121,25 +144,26 @@ def cat_6_demo():
     cat_6_index = [2, 3, 11, 21]
     # 画初始垃圾图
     cat_6_index_indicator = np.isin(range(wind_turbine_1.__len__()), cat_6_index)
-    ax = scatter(wind_turbine_1['wind speed'].values[~cat_6_index_indicator],
-                 wind_turbine_1['active power output'].values[~cat_6_index_indicator],
-                 color='b', s=4, label='Normal',
-                 rasterized=False)
-    ax = scatter(
-        wind_turbine_1['wind speed'].values[cat_6_index_indicator],
-        wind_turbine_1['active power output'].values[cat_6_index_indicator],
-        ax=ax,
-        facecolors='none', edgecolors='r', marker='*',
-        s=32,
-        zorder=10,
-        label='CAT-VI',
-        rasterized=False
-    )
-    ax = mfr_pc[2].plot(ax=ax)
-    # range label
-    ax = series(np.arange(50, 51, 0.1), np.arange(50, 51, 0.1), ax=ax, color='g', marker='+', label='SIM range',
-                **{'x_label': 'Wind Speed [m/s]',
-                   'y_label': 'Active Power Output [p.u.]'})
+    # ax = scatter(wind_turbine_1['wind speed'].values[~cat_6_index_indicator],
+    #              wind_turbine_1['active power output'].values[~cat_6_index_indicator],
+    #              color='b', s=4, label='Normal',
+    #              rasterized=False)
+    # ax = scatter(
+    #     wind_turbine_1['wind speed'].values[cat_6_index_indicator],
+    #     wind_turbine_1['active power output'].values[cat_6_index_indicator],
+    #     ax=ax,
+    #     facecolors='none', edgecolors='r', marker='*',
+    #     s=32,
+    #     zorder=10,
+    #     label='CAT-VI',
+    #     rasterized=False
+    # )
+    # ax = mfr_pc[2].plot(ax=ax)
+    # # range label
+    # ax = series(np.arange(50, 51, 0.1), np.arange(50, 51, 0.1), ax=ax, color='black',
+    #             label='4.5' + r'$\sigma$' + ' %' + '\nrange',
+    #             **{'x_label': 'Wind Speed [m/s]',
+    #                'y_label': 'Active Power Output [p.u.]'})
     # simulate
     wind_speed_range = wind_turbine_1['wind speed'].values[cat_6_index_indicator]
     wind_speed_std_range = wind_turbine_1['wind speed std.'].values[cat_6_index_indicator]
@@ -166,18 +190,40 @@ def cat_6_demo():
         )
         return _simulated_pout
 
-    simulated_pout = get_results()  # type: UncertaintyDataFrame
+    simulated_pout = get_results()  # type: ndarray
+    simulated_pout = UncertaintyDataFrame.init_from_2d_ndarray(simulated_pout.T)  # type: UncertaintyDataFrame
     preserved_data_pct = 99.99966
-    simulated_pout_uct = np.percentile(simulated_pout, [(100 - preserved_data_pct) / 2,
-                                                        100 - (100 - preserved_data_pct) / 2], axis=1).T
-    simulated_pout_mean = np.mean(simulated_pout, axis=1)
+    # simulated_pout_uct = np.percentile(simulated_pout, [(100 - preserved_data_pct) / 2,
+    #                                                     100 - (100 - preserved_data_pct) / 2], axis=1).T
+    # simulated_pout_mean = np.mean(simulated_pout, axis=1)
     # 画error bar
     for i in range(cat_6_index.__len__()):
+        ax = scatter(np.array([wind_speed_range[i]] * 2), simulated_pout(by_sigma=1).iloc[:, i].values, ax=ax,
+                     label='1' + r'$\sigma$' + ' %' if i == 0 else None, rasterized=False,
+                     color='grey', marker='+', s=100, zorder=12)
+        ax = scatter(np.array([wind_speed_range[i]] * 2), simulated_pout(by_sigma=2).iloc[:, i].values, ax=ax,
+                     label='2' + r'$\sigma$' + ' %' if i == 0 else None, rasterized=False,
+                     color='fuchsia', marker='x', s=32, zorder=12)
+        ax = scatter(np.array([wind_speed_range[i]] * 2), simulated_pout(by_sigma=3).iloc[:, i].values, ax=ax,
+                     label='3' + r'$\sigma$' + ' %' if i == 0 else None, rasterized=False,
+                     color='royalblue', marker='s', s=16, zorder=12)
+
+        ax = scatter(wind_speed_range[i], simulated_pout.loc['mean'][i], ax=ax,
+                     label='Mean' if i == 0 else None, rasterized=False,
+                     color=(0, 1, 0), marker='1', s=64, zorder=12)
+
+        ax = scatter(wind_speed_range[i], simulated_pout(0).iloc[0, i], ax=ax,
+                     label='Median' if i == 0 else None, rasterized=False,
+                     color='orange', marker='2', s=64, zorder=12,
+                     x_label='Wind Speed [m/s]',
+                     y_label='Active Power Output [p.u.]')
+
         ax.errorbar(wind_speed_range[i],
-                    simulated_pout_mean[i],
-                    yerr=np.array([[simulated_pout_mean[i] - simulated_pout_uct[i, 0]],
-                                   [simulated_pout_uct[i, 1] - simulated_pout_mean[i]]]),
-                    color='g', fmt='-+', markersize=10)
+                    simulated_pout.loc['mean'][i],
+                    yerr=np.array([[simulated_pout.loc['mean'][i] - simulated_pout(by_sigma=4.5).iloc[0, i]],
+                                   [simulated_pout(by_sigma=4.5).iloc[1, i] - simulated_pout.loc['mean'][i]]]),
+                    color='k', fmt='-', markersize=10)
+    plt.gca().legend(ncol=1, loc='upper left', prop={'size': 10})
 
     return ax
 
@@ -187,18 +233,21 @@ def plot_raw_data_for_outlier_demo():
     This function is to provide the very first figures in the paper, which shows that there seem to be outlier
     :return:
     """
-    wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
-    # Plot on-shore WT2
-    wind_turbine_2 = wind_turbines[1]  # type: WT
-    wind_turbine_2.plot(color='royalblue')
-    # Plot on-shore WF, which is instanced by WT1 - WT6
-    darly_wind_farm = WF.init_from_wind_turbine_instances(wind_turbines, obj_name='Dalry')
-    darly_wind_farm.plot(color='royalblue')
-    # Plot Zelengrad WF
+
+    for to_plot_obj in (DARLY_WIND_TURBINE_2, DARLY_WIND_FARM, ZELENGRAD_WIND_FARM):
+        exec("to_plot_obj.plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True)")
+
+
+def individual_wind_turbine_outliers():
+    pass
 
 
 if __name__ == '__main__':
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')
     # fit_plot_and_summary_all_mfr_pc_in_all_density('summary')
-    # tt = cat_6_demo()
-    plot_raw_data_for_outlier_demo()
+    # cat_6_demo()
+    # plot_raw_data_for_outlier_demo()
+    individual_wind_turbine_outliers()
+
+    DARLY_WIND_TURBINE_2.outlier_detector()
+
