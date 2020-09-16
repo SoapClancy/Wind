@@ -3,10 +3,9 @@ from Regression_Analysis.DeepLearning_Class import datetime_one_hot_encoder, Mat
 import numpy as np
 import pandas as pd
 from Time_Processing.format_convert_Func import datetime64_ndarray_to_datetime_tuple, np_datetime64_to_datetime
-from File_Management.load_save_Func import load_exist_npy_file_otherwise_run_and_save, save_npy_file, \
-    load_exist_pkl_file_otherwise_run_and_save, load_npy_file, load_pkl_file
+from File_Management.load_save_Func import *
 from BivariateAnalysis_Class import BivariateOutlier, Bivariate, MethodOfBins
-from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
+from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one, try_to_find_file
 from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike, UnivariateGaussianMixtureModel, \
     DeterministicUnivariateProbabilisticModel
 from typing import Union, Tuple, List, Iterable
@@ -31,6 +30,10 @@ from collections import ChainMap
 import warnings
 import re
 from Filtering.OutlierAnalyser_Class import DataCategoryNameMapper, DataCategoryData
+from Filtering.sklearn_novelty_and_outlier_detection_Func import *
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from ConvenientDataType import UncertaintyDataFrame
+from tqdm import tqdm
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
@@ -50,26 +53,18 @@ class WTandWFBase(PhysicalInstanceDataFrame):
     def _constructor_sliced(self):
         return super()._constructor_sliced
 
-    def __init__(self, *args, cut_in_wind_speed=4, cut_out_wind_speed=25, **kwargs):
+    def __init__(self, *args, cut_in_wind_speed=4, rated_active_power_output, cut_out_wind_speed=25, **kwargs):
         super().__init__(*args, **kwargs)
         self.cut_in_wind_speed = cut_in_wind_speed
         self.cut_out_wind_speed = cut_out_wind_speed
-
-    @property
-    def data_category_name_mapper(self) -> DataCategoryNameMapper:
-        meta = [["missing data", "missing", -1, "N/A"],
-                ["normal data", "normal", 0, "N/A"],
-                ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
-                ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
-                ["Low maximum Pout", "CAT-II", 3, "curtailment"],
-                ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
-                ["Scattered", "CAT-IV.a", 5, "averaging window or WT cut-out effects"],
-                ["Scattered", "CAT-IV.b", 6, "the others"],
-                ["Shifted PC", "CAT-V", 7, "WT Outages"]]
-
-        mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
-        mapper[:] = meta
-        return mapper
+        self.rated_active_power_output = rated_active_power_output
+        if 'active power output' in self.columns:
+            # Make all -0.02 p.u. ~ 0 p.u. Pout to be equal to 0 p.u
+            self.loc[self['active power output'].between(*self.rated_active_power_output * np.array([-0.02, 0])),
+                     'active power output'] = 0
+            # Make all 1.0 p.u. ~ 1.02 p.u. Pout to be equal to 1.0 p.u.
+            self.loc[self['active power output'].between(*self.rated_active_power_output * np.array([1, 1.02])),
+                     'active power output'] = self.rated_active_power_output
 
     def plot(self, *,
              ax=None,
@@ -79,9 +74,13 @@ class WTandWFBase(PhysicalInstanceDataFrame):
         ax = scatter(self['wind speed'].values,
                      self['active power output'].values / self.rated_active_power_output,
                      ax=ax,
-                     **{'alpha': WS_POUT_SCATTER_ALPHA,
-                        's': WS_POUT_SCATTER_SIZE,
-                        'color': 'royalblue'})
+                     **dict(ChainMap(kwargs,
+                                     WS_POUT_2D_PLOT_KWARGS,
+                                     {'alpha': WS_POUT_SCATTER_ALPHA,
+                                      's': WS_POUT_SCATTER_SIZE,
+                                      'color': 'royalblue'}
+                                     ))
+                     )
         if plot_mfr:
             for this_mfr_pc in plot_mfr:
                 ax = this_mfr_pc.plot(ax=ax)
@@ -94,34 +93,236 @@ class WTandWFBase(PhysicalInstanceDataFrame):
             )
         return ax
 
+    def update_air_density_to_last_column(self):
+        if 'air density' in self.columns:
+            return self['air density'].values
+        else:
+            from Wind_Class import cal_air_density, celsius_to_kelvin
+            air_density = cal_air_density(celsius_to_kelvin(self['environmental temperature'].values),
+                                          self['relative humidity'].values / 100,
+                                          self['barometric pressure'].values * 100)
+            self['air density'] = air_density
+            return air_density
+
 
 class WT(WTandWFBase):
 
     def __init__(self, *args, rated_active_power_output=3000, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.rated_active_power_output = rated_active_power_output
+        super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
 
-    def outlier_detector(self) -> DataCategoryData:
-        category = super().outlier_detector()  # type: DataCategoryData
-        # %% CAT-I.a and CAT-I.b
-        cat_i_outlier_mask = self.data_category_inside_boundary({
-            'wind speed': (self.cut_in_wind_speed, self.cut_out_wind_speed),
-            'active power output': (-np.inf, self.rated_active_power_output * 0.01)})
-        category.data[cat_i_outlier_mask] = "CAT-I"
+    @property
+    def data_category_name_mapper(self) -> DataCategoryNameMapper:
+        meta = [["missing data", "missing", -1, "N/A"],
+                ["normal data", "normal", 0, "N/A"],
+                ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
+                ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
+                ["Low maximum Pout", "CAT-II", 3, "curtailment"],
+                ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
+                ["Scattered", "CAT-IV.a", 5, "averaging window or WT cut-out effects"],
+                ["Scattered", "CAT-IV.b", 6, "the others"]]
+
+        mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
+        mapper[:] = meta
+        return mapper
+
+    @property
+    def default_results_saving_path(self):
+        return {
+            "outlier": self.results_path / f"Filtering/{self.__str__()}/results.pkl"
+        }
+
+    def outlier_detector(self, how_to_detect_scattered: str = 'isolation forest', *,
+                         save_file_path: Path = None) -> DataCategoryData:
+        assert (how_to_detect_scattered in ('isolation forest', 'hist')), "Check 'how_to_detect_scattered'"
+        save_file_path = save_file_path or self.default_results_saving_path["outlier"]
+        try_to_find_folder_path_otherwise_make_one(save_file_path.parent)
+        if try_to_find_file(save_file_path):
+            warnings.warn(f"{self.__str__()} has results in {save_file_path}")
+            return load_pkl_file(save_file_path)['DataCategoryData obj']
+        # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+        outlier = super().outlier_detector()  # type: DataCategoryData
+        # %% CAT-I
+        cat_i_outlier_mask = self.data_category_inside_boundary(
+            {'wind speed': (self.cut_in_wind_speed, self.cut_out_wind_speed),
+             'active power output': (-np.inf, 0)}
+        )
+        outlier.abbreviation[cat_i_outlier_mask] = "CAT-I"
+        del cat_i_outlier_mask
         # %% CAT-II
-        cat_ii_outlier_mask = super().data_category_is_linearity('60T', general_linearity_error={
-            'wind speed': 0.1,
-            'active power output': self.rated_active_power_output * 0.001
-        })
+        cat_ii_outlier_mask = self.data_category_is_linearity(
+            '30T',
+            constant_error={'active power output': self.rated_active_power_output * 0.0005}
+        )
         cat_ii_outlier_mask = np.bitwise_and(
             cat_ii_outlier_mask,
-            self.data_category_inside_boundary({
-                'wind speed': (self.cut_in_wind_speed, self.cut_out_wind_speed),
-                'active power output': (self.rated_active_power_output * 0.05, self.rated_active_power_output * 0.95)})
+            self.data_category_inside_boundary(
+                {'active power output': (self.rated_active_power_output * 0.1, self.rated_active_power_output * 0.9)}
+            )
         )
-        category.data[cat_ii_outlier_mask] = "CAT-II"
+        outlier.abbreviation[cat_ii_outlier_mask] = "CAT-II"
+        del cat_ii_outlier_mask
+        # %% CAT-III
+        cat_iii_outlier_mask = self.data_category_is_linearity('60T', constant_error={'wind speed': 0.01})
+        outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
+        del cat_iii_outlier_mask
+        # %% CAT-IV
+        current_normal_index = np.argwhere(outlier.abbreviation == 'normal').flatten()
+        if how_to_detect_scattered == 'hist':
+            cat_iv_outlier_mask = BivariateOutlier(
+                predictor_var=self.iloc[current_normal_index]['wind speed'].values,
+                dependent_var=self.iloc[current_normal_index]['active power output'].values,
+                bin_step=0.5
+            ).identify_interquartile_outliers_based_on_method_of_bins()
+        else:
+            current_normal_data = StandardScaler().fit_transform(self.concerned_data().iloc[current_normal_index])
+            cat_iv_outlier_mask = use_isolation_forest(current_normal_data)
+            del current_normal_data
 
-        return category
+        # cat_iv_outlier_mask[100:] = False  # #######################################################################
+        outlier.abbreviation[current_normal_index[cat_iv_outlier_mask]] = "CAT-IV"
+        del current_normal_index, cat_iv_outlier_mask
+        # %% CAT-IV.a and CAT-IV.b
+        outlier.abbreviation[np.all((
+            (
+                outlier.abbreviation == "CAT-IV",
+                self['active power output'] >= PowerCurveByMfr.init_all_instances_in_docs()[0](self['wind speed']),
+                self['active power output'] <= PowerCurveByMfr.init_all_instances_in_docs()[-1](self['wind speed'])
+            )
+        ), axis=0)] = "CAT-IV.a"
+        outlier.abbreviation[np.bitwise_and(outlier.abbreviation == "CAT-IV",
+                                            np.isnan(self['wind speed std.']))] = "CAT-IV.b"
+        self.update_air_density_to_last_column()
+        current_cat_iv_index = np.argwhere(outlier.abbreviation == 'CAT-IV').flatten()
+        current_cat_iv_data = self[['wind speed',
+                                    'wind speed std.',
+                                    'active power output',
+                                    'air density']].iloc[current_cat_iv_index]
+        current_cat_iv_data['Mfr-PC obj'] = PowerCurveByMfr.init_multiple_instances(
+            air_density=current_cat_iv_data['air density'].values)
+        # To find the recordings with same wind speed, wind speed std., and air density. This will increase the
+        # computation efficiency in further simulation
+        unique_rows, unique_label = current_cat_iv_data.unique(['wind speed', 'wind speed std.', 'Mfr-PC obj'])
+        # Do the simulation (ONLY in unique_rows)
+        from Wind_Class import Wind
+        # Use the buffer
+        buffer = try_to_find_file(save_file_path.parent / 'temp.pkl')
+        if buffer:
+            buffer = load_pkl_file(save_file_path.parent / 'temp.pkl')
+            cat_iv_a_outlier_index = buffer['cat_iv_a_outlier_index']
+            cat_iv_b_outlier_index = buffer['cat_iv_b_outlier_index']
+        else:
+            cat_iv_a_outlier_index, cat_iv_b_outlier_index = [], []
+        for i in tqdm(range(unique_rows.shape[0])):
+            # Use the buffer
+            if buffer:
+                if i <= buffer['i']:
+                    continue
+            this_unique_row = unique_rows.iloc[i]
+            # prepare high resolution wind
+            wind = Wind(this_unique_row['wind speed'], this_unique_row['wind speed std.'])
+            high_resol_wind = wind.simulate_transient_wind_speed_time_series(
+                resolution=10,
+                traces_number_for_each_recording=1_000_000,
+            )
+            # prepare mfr-pc
+            this_unique_mfr_pc = this_unique_row['Mfr-PC obj']
+            this_pout_uncertainty = this_unique_mfr_pc.cal_with_hysteresis_control_using_high_resol_wind(
+                high_resol_wind,
+                return_percentiles=UncertaintyDataFrame.init_from_template(
+                    columns_number=len(high_resol_wind),
+                    percentiles=None),
+            )
+            # Compare to judge. Note that this is a kind of inverse of unique
+            pout_actual = current_cat_iv_data[unique_label == i]
+            for j in range(pout_actual.shape[0]):
+                this_pout_actual = pout_actual['active power output'].iloc[j] / self.rated_active_power_output
+                if all((this_pout_actual >= this_pout_uncertainty.loc['3_Sigma_low', 0],
+                        this_pout_actual <= this_pout_uncertainty.loc['3_Sigma_high', 0])):
+                    cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+                elif all((this_pout_actual >= this_pout_uncertainty.loc['3_Sigma_low', 0],
+                          this_pout_actual <= float(this_unique_mfr_pc(this_unique_row['wind speed'])))):
+                    cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+                else:
+                    cat_iv_b_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+            # Save progress
+            if (i % 25) == 0:
+                save_pkl_file(save_file_path.parent / 'temp.pkl',
+                              {"i": i,
+                               "outlier": outlier,
+                               "cat_iv_a_outlier_index": cat_iv_a_outlier_index,
+                               "cat_iv_b_outlier_index": cat_iv_b_outlier_index})
+        outlier.abbreviation[self.index.isin(cat_iv_a_outlier_index)] = "CAT-IV.a"
+        outlier.abbreviation[self.index.isin(cat_iv_b_outlier_index)] = "CAT-IV.b"
+        # %% CAT-I.a and CAT-I.b
+        cat_iv_a_outlier_index = self.index[outlier.abbreviation == "CAT-IV.a"]
+        for i in range(cat_iv_a_outlier_index.shape[0] - 1):
+            this_window_mask = np.bitwise_and(self.index > cat_iv_a_outlier_index[i],
+                                              self.index < cat_iv_a_outlier_index[i + 1])
+            if all((np.unique(outlier.abbreviation[this_window_mask]).shape[0] == 1,
+                    "CAT-I" in outlier.abbreviation[this_window_mask])):
+                outlier.abbreviation[this_window_mask] = "CAT-I.a"
+        outlier.abbreviation[outlier.abbreviation == "CAT-I"] = "CAT-I.b"
+        # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+        save_pkl_file(save_file_path,
+                      {'raw_ndarray_data': np.array(outlier.abbreviation),
+                       'raw_index': outlier.index,
+                       'DataCategoryData obj': outlier})
+        return outlier
+
+    def outlier_plot(self, outlier: DataCategoryData = None, ax=None, *, plot_individual: bool = False):
+        outlier = outlier or load_pkl_file(self.default_results_saving_path["outlier"])['DataCategoryData obj']
+        self["active power output"] /= self.rated_active_power_output
+
+        if sum(outlier("CAT-I.a")) > 0:
+            ax = scatter(*self[outlier("CAT-I.a")][["wind speed", "active power output"]].values.T, label="CAT-I.a",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="darkorange", marker="1", s=24, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-I.b")) > 0:
+            ax = scatter(*self[outlier("CAT-I.b")][["wind speed", "active power output"]].values.T, label="CAT-I.b",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="fuchsia", marker="2", s=24, zorder=8, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-II")) > 0:
+            ax = scatter(*self[outlier("CAT-II")][["wind speed", "active power output"]].values.T, label="CAT-II",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="black", marker="x", s=16, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-III")) > 0:
+            ax = scatter(*self[outlier("CAT-III")][["wind speed", "active power output"]].values.T, label="CAT-III",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="cyan", marker="+", s=24, zorder=11, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-IV.a")) > 0:
+            ax = scatter(*self[outlier("CAT-IV.a")][["wind speed", "active power output"]].values.T, label="CAT-IV.a",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="green", marker="3", s=24, zorder=9, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-IV.b")) > 0:
+            ax = scatter(*self[outlier("CAT-IV.b")][["wind speed", "active power output"]].values.T, label="CAT-IV.b",
+                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                         color="red", marker="4", s=24, **WS_POUT_2D_PLOT_KWARGS)
+        ax = scatter(*self[outlier("normal")][["wind speed", "active power output"]].values.T, label="Others",
+                     ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+                     color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS)
+        self["active power output"] *= self.rated_active_power_output
+
+        return ax
+
+    def outlier_report(self, outlier: DataCategoryData = None):
+        outlier = outlier or load_pkl_file(self.defaoult_results_saving_path["outlier"])['DataCategoryData obj']
+
+        report_pd = pd.DataFrame(index=np.unique(outlier.abbreviation),
+                                 columns=['number', 'percentage'], dtype=float)
+        for this_outlier in np.unique(outlier.abbreviation):
+            this_outlier_number = sum(outlier(this_outlier))
+            report_pd.loc[this_outlier, 'number'] = this_outlier_number
+            report_pd.loc[this_outlier, 'percentage'] = this_outlier_number / outlier.abbreviation.shape[0] * 100
+        report_pd.rename(index={"normal": "others"}, inplace=True)
+        bar(report_pd.index, report_pd['percentage'].values, y_label="Recording percentage [%]",
+            autolabel_format="{:.2f}", y_lim=(-1, 85))
+        plt.xticks(rotation=45)
+
+        bar(report_pd.index, report_pd['number'].values, y_label="Recording number",
+            autolabel_format="{:.0f}", y_lim=(-1, np.max(report_pd['number'].values) * 1.2))
+        plt.xticks(rotation=45)
+
+        report_pd.to_csv(self.default_results_saving_path["outlier"].parent / "report.csv")
 
     def get_current_season(self, season_template: Enum = SeasonTemplate1) -> tuple:
         # TODO Deprecated
@@ -594,20 +795,6 @@ class WT(WTandWFBase):
                                                       abs(hottest_in_summer_mob_statistic[max_diff_idx, 1] -
                                                           coldest_in_winter_mob_statistic[max_diff_idx, 1])))
 
-    def plot_wind_speed_to_active_power_output_scatter(self, show_category_as_in_outlier: Union[Tuple[int, ...], str],
-                                                       **kwargs):
-        title = self.name
-        bivariate = Bivariate(self.measurements['wind speed'].values,
-                              self.measurements['active power output'].values,
-                              predictor_var_name='Wind speed (m/s)',
-                              dependent_var_name='Active power output (kW)',
-                              category=self.outlier_category)
-        bivariate.plot_scatter(show_category=show_category_as_in_outlier,
-                               title=title, save_format='png', alpha=0.75,
-                               save_file_=self.results_path + self.name + str(
-                                   show_category_as_in_outlier), x_lim=(0, 28.5),
-                               y_lim=(-3000 * 0.0125, 3000 * 1.0125), **kwargs)
-
     def identify_outlier(self):
         try_to_find_folder_path_otherwise_make_one(self.results_path + 'Filtering/' + self.__str__() + '/')
 
@@ -672,70 +859,10 @@ class WT(WTandWFBase):
         save_npy_file(self.results_path / 'Filtering/' / self.__str__() / '/outlier_category.npy',
                       self.outlier_category)
 
-    def __identify_missing_data_outlier(self, data_name: str):
-        """
-        missing data outlier
-        """
-        return np.isnan(self.measurements[data_name].values)
-
-    def __identify_shut_down_outlier(self):
-        """
-        shut down outlier
-        """
-        considered_data_mask = np.bitwise_and(self.outlier_category_detailed['wind speed'].values == 0,
-                                              self.outlier_category_detailed['active power output'].values == 0)
-        bivariate_outlier = BivariateOutlier(predictor_var=self.measurements['wind speed'].values,
-                                             dependent_var=self.measurements['active power output'].values,
-                                             mob_and_outliers_detection_considered_data_mask=considered_data_mask)
-        return bivariate_outlier.identify_shut_down_outlier(cannot_be_zero_predictor_var_range=(
-            self.cut_in_wind_speed,
-            self.cut_out_wind_speed),
-            zero_upper_tolerance_factor=0.1)
-
-    def __identify_change_point_outlier(self, data_name: str):
-        """
-        change point outlier in series data
-        """
-        return change_point_outlier_by_sliding_window_and_interquartile_range(self.measurements[data_name].values, 6)
-
-    def __identify_curtailment_outlier(self):
-        curtail_mask = self.__identify_linear_series_outlier('active power output', 1)
-        return np.all((curtail_mask,
-                       self.measurements['active power output'].values < self.rated_active_power_output * 0.9,
-                       self.measurements['active power output'].values > self.rated_active_power_output * 0.1),
-                      axis=0)
-
-    def __identify_linear_series_outlier(self, data_name: str, error: float = None):
-        """
-        linear series outlier in series data
-        """
-        return linear_series_outlier(self[data_name].values, 6, error)
-
-    def __identify_interquartile_outlier(self):
-        """
-        bivariate interquartile outliers
-        """
-        #
-        must_be_outlier_rule = (((0, 30), (3000 * 1.005, np.inf)),
-                                ((0, 5), (300, np.inf)))
-        considered_data_mask = np.bitwise_and(self.outlier_category_detailed['wind speed'].values == 0,
-                                              self.outlier_category_detailed['active power output'].values == 0)
-        bivariate_outlier = BivariateOutlier(predictor_var=self.measurements['wind speed'].values,
-                                             dependent_var=self.measurements['active power output'].values,
-                                             bin_step=0.1,
-                                             mob_and_outliers_detection_considered_data_mask=considered_data_mask,
-                                             must_be_outlier_rule=must_be_outlier_rule)
-        return bivariate_outlier.identify_interquartile_outliers_based_on_method_of_bins()
-
-    def __identify_out_of_range_outlier(self, data_name: str,
-                                        lower_bound: Union[float, int], upper_bound: Union[float, int]):
-        return out_of_range_outlier(self.measurements[data_name].values, lower_bound, upper_bound)
-
 
 class WF(WTandWFBase):
     def __init__(self, *args, rated_active_power_output: Union[int, float], **kwargs):
-        super().__init__(*args, **kwargs)
-        self.rated_active_power_output = rated_active_power_output
+        super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
 
     @classmethod
     def init_from_wind_turbine_instances(cls, wind_turbine_instances: Iterable[WT], *, obj_name: str):

@@ -5,6 +5,7 @@ import tensorflow_probability as tfp
 from PowerCurve_Class import PowerCurveByMfr
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
 from typing import Iterator, Union
+from BivariateAnalysis_Class import MethodOfBins
 
 
 def celsius_to_kelvin(celsius):
@@ -69,7 +70,7 @@ class Wind:
     def simulate_transient_wind_speed_time_series(self,
                                                   resolution: int,
                                                   traces_number_for_each_recording: int, *,
-                                                  mode: str) -> Iterator:
+                                                  mode: str = 'cross sectional'):
         """
         To simulate the transient wind speed in original_resolution [seconds]
         :param resolution: the resolution of simulated transient time series [seconds]
@@ -128,19 +129,25 @@ class Wind:
                         _this_trace = tfp.mcmc.sample_chain(num_results=num_of_results,
                                                             num_burnin_steps=0,
                                                             current_state=current_state,
-                                                            # kernel=tfp.mcmc.RandomWalkMetropolis(
-                                                            #     this_recording_distribution.log_prob
-                                                            # ),
-                                                            kernel=tfp.mcmc.HamiltonianMonteCarlo(
+                                                            kernel=tfp.mcmc.RandomWalkMetropolis(
                                                                 this_recording_distribution.log_prob,
-                                                                num_leapfrog_steps=4,
-                                                                step_size=2),
+                                                                # new_state_fn=tfp.mcmc.random_walk_uniform_fn()
+                                                            ),
+                                                            # kernel=tfp.mcmc.HamiltonianMonteCarlo(
+                                                            #     this_recording_distribution.log_prob,
+                                                            #     num_leapfrog_steps=2,
+                                                            #     step_size=0.5),
                                                             trace_fn=None)
                         return _this_trace
 
                     sample_func_faster = tf.function(sample_func, autograph=False, experimental_compile=True)
                     this_trace = sample_func_faster().numpy().T
                     self.previous_trace = this_trace if mode == 'time series' else None
+                    # For debug
+                    # X, Y = this_trace[:500, :-1].flatten(), this_trace[:500, 1:].flatten()
+                    # scatter(X, Y)
+                    # mob = MethodOfBins(X, Y, bin_step=0.5).mob
+                    # hist(mob[int(mob.__len__() / 2)]['dependent_var_in_this_bin'])
                     self.i += 1
                 except IndexError:
                     raise StopIteration

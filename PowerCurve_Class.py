@@ -27,6 +27,7 @@ import inspect
 from pathlib import Path
 from File_Management.load_save_Func import save_pkl_file
 from project_utils import *
+import re
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -131,7 +132,7 @@ class PowerCurveByMfr(PowerCurve):
             raise TypeError("'air_density' of PowerCurveByMfr instance initialisation function should be "
                             "type int or type float or type str")
         if not isinstance(air_density, str):
-            air_density = self.__infer_str_air_density(air_density)
+            air_density = self.infer_str_air_density(air_density)
         mfr_pc_metadata = self.make_mfr_pc_metadata()
         self.mfr_ws = np.concatenate(([-np.inf],
                                       [cut_in_ws or mfr_pc_metadata.index.values[0] - float_eps * 2],
@@ -162,10 +163,13 @@ class PowerCurveByMfr(PowerCurve):
         if not isinstance(air_density, ndarray):
             raise TypeError("To initialise multiple PowerCurveByMfr instances at the same time, "
                             "'air_density' must be type ndarray")
-        if air_density.dtype not in (int, float):
-            raise TypeError("the elements of 'air_density' must be type int or type float")
+        if (air_density.dtype not in (int, float)) and (not pd.api.types.is_string_dtype(air_density)):
+            raise TypeError("the elements of 'air_density' must be type int, float, or str ")
         # %% to get the unique strings indicating air density
-        air_density_str_tuple = cls.__infer_str_air_density(air_density)
+        if pd.api.types.is_string_dtype(air_density):
+            air_density_str_tuple = air_density
+        else:
+            air_density_str_tuple = cls.infer_str_air_density(air_density)
         air_density_str_unique, air_density_str_unique_inverse = np.unique(air_density_str_tuple, return_inverse=True)
         # %% initialise the ndarray storing the PowerCurveByMfr objs
         multiple_instances = np.empty(air_density.shape, dtype=object)
@@ -186,8 +190,8 @@ class PowerCurveByMfr(PowerCurve):
     def cal_with_hysteresis_control_using_high_resol_wind(
             self,
             high_resol_wind,
-            mode: str,
-            return_percentiles=None
+            mode: str = 'cross sectional',
+            return_percentiles: UncertaintyDataFrame = None
     ) -> Union[ndarray, pd.DataFrame]:
         """
         TO calculate the Pout considering hysteresis and restart wind speed
@@ -200,8 +204,8 @@ class PowerCurveByMfr(PowerCurve):
         :param mode: can be either "time series" or "cross sectional"
         refer to Wind (in Wind_Class.py) instance method "simulate_transient_wind_speed_time_series"
 
-        :param return_percentiles: type StrOneDimensionNdarray
-        If specified, then return to a pd.DataFrame instances, whose index is determined by return_percentiles
+        :param return_percentiles: type UncertaintyDataFrame
+        If specified, then return to a UncertaintyDataFrame instance, whose index is determined by return_percentiles
 
         :return: simulated distribution of Pout
         for ndarray:
@@ -211,12 +215,8 @@ class PowerCurveByMfr(PowerCurve):
         index is return_percentiles,
         column is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
         """
-        if return_percentiles is not None:
-            return_percentiles = StrOneDimensionNdarray(return_percentiles)
-            return_percentiles = UncertaintyDataFrame(
-                index=np.append(return_percentiles, ['mean', 'std.']),
-                columns=range(len(high_resol_wind))
-            )
+        # To prevent change in the existing return_percentiles
+        return_percentiles = copy.deepcopy(return_percentiles)
         # Numba type should be determined so it can compile. Dynamic is not allowed
         numba_var_mfr_ws, numba_var_mfr_p = self.mfr_ws, self.mfr_p
         numba_var_cut_out_wind_speed = self.cut_out_wind_speed
@@ -224,7 +224,7 @@ class PowerCurveByMfr(PowerCurve):
 
         @guvectorize([(float32[:], boolean[:], float32[:], boolean[:])],
                      '(n), (n)->(n), (n)', nopython=True, target='parallel')
-        def perform_calculation(x, control_signal_input, y, control_signal_output):
+        def hpc_with_hysteresis_control_using_high_resol_wind(x, control_signal_input, y, control_signal_output):
             """
             Impressive! Very high performance http://numba.pydata.org/numba-doc/latest/user/vectorize.html#guvectorize
             I have also tried jit(nopython=True, fastmath=True, parallel=True), but it is not as fast as this
@@ -257,32 +257,28 @@ class PowerCurveByMfr(PowerCurve):
             else:
                 raise ValueError("'mode' should be either 'cross sectional' or 'time series'")
 
-            this_high_resol_pout_results, hysteresis_control_signal = perform_calculation(
+            this_high_resol_pout_results, hysteresis_control_signal = hpc_with_hysteresis_control_using_high_resol_wind(
                 this_high_resol_wind,
                 hysteresis_control_signal
             )
             this_high_resol_pout_results = np.mean(this_high_resol_pout_results, axis=1)
             if return_percentiles is not None:
                 # The reason not using @guvectorize decorating np.percentile is it will actually be slower...
-                return_percentiles[this_high_resol_wind_index] = np.concatenate(
-                    (np.percentile(this_high_resol_pout_results,
-                                   return_percentiles.index.values[:-2].astype(float)),
-                     np.mean(this_high_resol_pout_results, keepdims=True),
-                     np.std(this_high_resol_pout_results, keepdims=True))
-                )
+                return_percentiles.update_one_column(this_high_resol_wind_index,
+                                                     data=this_high_resol_pout_results)
             else:
                 results.append(this_high_resol_pout_results)
         if return_percentiles is not None:
             # Must save as pd.DataFrame for stability. As UncertaintyDataFrame may change frequently
-            return pd.DataFrame(return_percentiles)
+            return return_percentiles.pd_view
         else:
             return np.array(results)
 
     @staticmethod
-    def __infer_str_air_density(air_density: Union[int, float, ndarray]) -> Union[str, Tuple[str, ...]]:
+    def infer_str_air_density(air_density: Union[int, float, Iterable]) -> Union[str, Tuple[str, ...]]:
         candidates_as_columns = PowerCurveByMfr.make_mfr_pc_metadata().columns
         candidates = candidates_as_columns.values.astype(float)
-        if not isinstance(air_density, ndarray):
+        if not isinstance(air_density, Iterable):
             index = np.argmin(np.abs(candidates - air_density))
             return candidates_as_columns[index]
         else:
