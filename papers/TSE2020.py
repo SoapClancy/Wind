@@ -15,8 +15,6 @@ from Data_Preprocessing.float_precision_control_Func import \
 from ConvenientDataType import UncertaintyDataFrame
 from Ploting.adjust_Func import *
 from File_Management.path_and_file_management_Func import remove_win10_max_path_limit
-import psutil
-import gc
 
 remove_win10_max_path_limit()
 
@@ -24,19 +22,26 @@ remove_win10_max_path_limit()
 """
 This paper uses Dalry WF (especially its WT2 for individual WT analysis) and Zelengrad WF recordings
 """
-
+# %% The Mfr-PC with the lowest and highest air densities
 MFR_PC_LIMIT = (PowerCurveByMfr(air_density='0.97'), PowerCurveByMfr(air_density='1.27',
                                                                      color='lime',
                                                                      linestyle='--'))
+# %% Darly wind turbines
 DARLY_WIND_TURBINES = load_raw_wt_from_txt_file_and_temperature_from_csv()
-DARLY_WIND_TURBINE_1 = DARLY_WIND_TURBINES[0]  # type: WT
+# This paper essentially only have 2D analysis
+for i in range(DARLY_WIND_TURBINES.__len__()):
+    DARLY_WIND_TURBINES[i].predictor_names = ('wind speed',)
+# Darly WT2 is of the most interest
 DARLY_WIND_TURBINE_2 = DARLY_WIND_TURBINES[1]  # type: WT
-# Set WT2 predictor_names
-DARLY_WIND_TURBINE_1.predictor_names = ('wind speed',)
-DARLY_WIND_TURBINE_2.predictor_names = ('wind speed',)
+# WT outlier results
+DARLY_WIND_TURBINES_OUTLIERS = []
+for this_wind_turbine in DARLY_WIND_TURBINES:
+    DARLY_WIND_TURBINES_OUTLIERS.append(load_pkl_file(this_wind_turbine.default_results_saving_path["outlier"]))
+
+DARLY_WIND_FARM = WF.init_from_wind_turbine_instances(DARLY_WIND_TURBINES, obj_name='Dalry')  # type: WF
 
 
-# DARLY_WIND_FARM = WF.init_from_wind_turbine_instances(DARLY_WIND_TURBINES, obj_name='Dalry')  # type: WF
+# %% Zelengrad WF
 # ZELENGRAD_WIND_FARM = load_croatia_data('Zelengrad')['Zelengrad']  # type: WF
 # # Aggregate to 10 min
 # ZELENGRAD_WIND_FARM = ZELENGRAD_WIND_FARM.resample(
@@ -248,7 +253,7 @@ def plot_raw_data_for_outlier_demo():
 
 
 def individual_wind_turbine_outliers_outlier_detector():
-    for this_wt in load_raw_wt_from_txt_file_and_temperature_from_csv():
+    for i, this_wt in enumerate(load_raw_wt_from_txt_file_and_temperature_from_csv()):
         this_wt.predictor_names = ('wind speed',)
         this_wt.outlier_detector()
         # this_wt.outlier_plot(outlier)
@@ -256,13 +261,19 @@ def individual_wind_turbine_outliers_outlier_detector():
 
 
 def wind_turbine_level_outlier_results_demo():
-    for _ in load_raw_wt_from_txt_file_and_temperature_from_csv():
+    for i, _ in enumerate(load_raw_wt_from_txt_file_and_temperature_from_csv()):
+        # if i != 1:
+        #     continue
         _.outlier_plot()
         # _.outlier_plot(plot_individual=True)
         # _.outlier_report()
     # DARLY_WIND_TURBINE_2.outlier_plot()
     # DARLY_WIND_TURBINE_2.outlier_plot(plot_individual=True)
     # DARLY_WIND_TURBINE_2.outlier_report()
+
+
+def darly_wind_farm_init():
+    pass
 
 
 if __name__ == '__main__':
@@ -272,6 +283,6 @@ if __name__ == '__main__':
     # plot_raw_data_for_outlier_demo()
 
     # individual_wind_turbine_outliers_outlier_detector()
+    # wind_turbine_level_outlier_results_demo()
 
-    # DARLY_WIND_TURBINE_2.outlier_detector()
-    wind_turbine_level_outlier_results_demo()
+    darly_wind_farm_init()

@@ -4,8 +4,15 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from PowerCurve_Class import PowerCurveByMfr
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv
-from typing import Iterator, Union
+from typing import Iterator, Union, Callable
 from BivariateAnalysis_Class import MethodOfBins
+from pathlib import Path
+from File_Management.path_and_file_management_Func import list_all_specific_format_files_in_a_folder_path
+import pandas as pd
+import datetime
+from sklearn.linear_model import LinearRegression
+from tensorflow_probability.python.util.seed_stream import SeedStream
+from tensorflow_probability.python.internal import dtype_util
 
 
 def celsius_to_kelvin(celsius):
@@ -70,7 +77,8 @@ class Wind:
     def simulate_transient_wind_speed_time_series(self,
                                                   resolution: int,
                                                   traces_number_for_each_recording: int, *,
-                                                  mode: str = 'cross sectional'):
+                                                  mode: str = 'cross sectional',
+                                                  sigma_func: Callable):
         """
         To simulate the transient wind speed in original_resolution [seconds]
         :param resolution: the resolution of simulated transient time series [seconds]
@@ -86,6 +94,8 @@ class Wind:
         "cross sectional": wind_speed[i] and wind_speed[i+1], wind_speed_std[i] and wind_speed_std[i+1], are not
         correlated. This is the common situation when doing Pout-WS scatter plot analysis. In this case, the last
         samples in the i-th simulation will be not initial points for (i+1)-th simulation.
+
+        :param sigma_func: A function that can specify the proposal distribution sigma
 
         :return: Iterator, __next__ return is ndarray
          axis 0 is the number of traces
@@ -124,6 +134,31 @@ class Wind:
                         raise ValueError("'mode' should be either 'cross sectional' or 'time series'")
                     num_of_results = int(original_resolution / resolution)
 
+                    # define proposal func
+                    def custom_random_walk_normal_fn():
+                        def _fn(state_parts, seed):
+                            with tf.name_scope('custom_random_walk_normal_fn'):
+                                scales = [sigma_func(x) for x in state_parts]
+                                if len(scales) == 1:
+                                    scales *= len(state_parts)
+                                if len(state_parts) != len(scales):
+                                    raise ValueError('`scale` must broadcast with `state_parts`.')
+                                seed_stream = SeedStream(seed, salt='CustomRandomWalkNormalFn')
+                                next_state_parts = [
+                                    tf.random.normal(  # pylint: disable=g-complex-comprehension
+                                        mean=state_part,
+                                        stddev=scale_part,
+                                        shape=tf.shape(state_part),
+                                        dtype=dtype_util.base_dtype(state_part.dtype),
+                                        seed=seed_stream())
+                                    for scale_part, state_part in zip(scales, state_parts)
+                                ]
+
+                                return next_state_parts
+
+                        return _fn
+
+                    # define sample func
                     def sample_func():
                         # zero burn-in, as we want to be as near as current_state as possible
                         _this_trace = tfp.mcmc.sample_chain(num_results=num_of_results,
@@ -131,7 +166,7 @@ class Wind:
                                                             current_state=current_state,
                                                             kernel=tfp.mcmc.RandomWalkMetropolis(
                                                                 this_recording_distribution.log_prob,
-                                                                # new_state_fn=tfp.mcmc.random_walk_uniform_fn()
+                                                                new_state_fn=custom_random_walk_normal_fn()
                                                             ),
                                                             # kernel=tfp.mcmc.HamiltonianMonteCarlo(
                                                             #     this_recording_distribution.log_prob,
@@ -140,14 +175,19 @@ class Wind:
                                                             trace_fn=None)
                         return _this_trace
 
-                    sample_func_faster = tf.function(sample_func, autograph=False, experimental_compile=True)
-                    this_trace = sample_func_faster().numpy().T
+                    # sample_func_faster = tf.function(sample_func, autograph=False, experimental_compile=True)
+                    # this_trace = sample_func_faster().numpy().T
+
+                    this_trace = sample_func().numpy().T
+
                     self.previous_trace = this_trace if mode == 'time series' else None
                     # For debug
-                    # X, Y = this_trace[:500, :-1].flatten(), this_trace[:500, 1:].flatten()
-                    # scatter(X, Y)
-                    # mob = MethodOfBins(X, Y, bin_step=0.5).mob
-                    # hist(mob[int(mob.__len__() / 2)]['dependent_var_in_this_bin'])
+                    # X, Y = this_trace[:50000, :-1].flatten(), this_trace[:50000, 1:].flatten()
+                    # # scatter(X, Y)
+                    # mob = MethodOfBins(X, Y, bin_step=0.1)
+                    # # hist(mob.mob[int(mob.mob.__len__() / 2)]['dependent_var_in_this_bin'])
+                    # temp = mob.cal_mob_statistic_eg_quantile(behaviour='new', statistic=None)
+                    # series(temp.pd_view.loc['std.'])
                     self.i += 1
                 except IndexError:
                     raise StopIteration
@@ -159,9 +199,66 @@ class Wind:
     def transient_distribution(self):
         distribution = tfp.distributions.TruncatedNormal(loc=self.wind_speed,
                                                          scale=self.wind_speed_std,
-                                                         low=0,
-                                                         high=np.inf)
+                                                         low=0.,
+                                                         high=70.)
         return distribution
+
+    @staticmethod
+    def learn_transition_by_looking_at_actual_high_resol() -> Callable:
+        """
+        This function is to look at the actual WS measurements from North Harris
+        :return:
+        """
+        data_folder_path = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Wind_and_NetworkData"
+                                r"\CD-ROM\North harris")
+        actual_high_resol_wind_speed = []
+        for this_csv_path in list_all_specific_format_files_in_a_folder_path(data_folder_path, "CSV", ""):
+            # Read, and find out how many years in this recording
+            this_file_pd = pd.read_csv(this_csv_path, index_col=False)[['YEAR', 'DAY', 'HH', 'MM', 'SS', 'V50']]
+            unique_year, unique_year_index, unique_year_counts = np.unique(
+                this_file_pd['YEAR'].values, return_index=True, return_counts=True
+            )
+            # Simply calculate the time shift in seconds
+            seconds = ((this_file_pd['DAY'].values - 1) * 24 * 3600 +  # The first day starts from 1
+                       this_file_pd['HH'].values * 3600 +
+                       this_file_pd['MM'].values * 60 +
+                       this_file_pd['SS'].values)
+            pd_timedelta = pd.to_timedelta(seconds, 'second')
+            # Find starting of the year
+            pd_date_time_index_meta = []
+            for i in range(unique_year.__len__()):
+                slice_i = slice(unique_year_index[i], unique_year_index[i] + unique_year_counts[i])
+                pd_date_time_index = pd.to_datetime(
+                    datetime.datetime(year=this_file_pd['YEAR'].iloc[unique_year_index[i]], month=1, day=1)
+                )
+                pd_date_time_index += pd_timedelta[slice_i]
+                pd_date_time_index_meta.append(pd_date_time_index)
+            # Convert back to get the pd.DateTimeIndex obj
+            pd_date_time_index = pd.DatetimeIndex(np.concatenate(pd_date_time_index_meta))
+            # Aggregate to 10 seconds
+            this_reading_usable = this_file_pd['V50']
+            this_reading_usable.index = pd_date_time_index
+            this_reading_usable = this_reading_usable.resample("10S").mean()
+            actual_high_resol_wind_speed.append(this_reading_usable)
+        # Analysis through pure Numpy
+        actual_high_resol_wind_speed = np.concatenate(actual_high_resol_wind_speed)
+        # Method of bins
+        mob = MethodOfBins(actual_high_resol_wind_speed[:-1],
+                           actual_high_resol_wind_speed[1:], bin_step=0.1)
+        sigma = mob.cal_mob_statistic_eg_quantile(behaviour="new", statistic=None)
+        # Fit
+        sigma_to_fit_x = sigma.columns.values
+        sigma_to_fit_y = sigma.loc['std.'].values
+        only_consider_smaller_than_33_index = sigma_to_fit_x < 33
+        reg = LinearRegression().fit(sigma_to_fit_x[only_consider_smaller_than_33_index].reshape(-1, 1),
+                                     sigma_to_fit_y[only_consider_smaller_than_33_index].reshape(-1, 1))
+
+        # return func
+        def func(x):
+            x = np.array(IntFloatConstructedOneDimensionNdarray(x)).reshape(-1, 1)
+            return reg.predict(x).flatten()
+
+        return func
 
 
 if __name__ == '__main__':
@@ -173,5 +270,5 @@ if __name__ == '__main__':
         this_wind_turbine['barometric pressure'].values * 100
     )
     mfr_pc_instances = PowerCurveByMfr.init_multiple_instances(rho)
-    for i, this_mfr_pc in enumerate(mfr_pc_instances):
+    for _, this_mfr_pc in enumerate(mfr_pc_instances):
         this_mfr_pc.sasa_algorithm_to_cal_possible_pout_range(range(2, 26))
