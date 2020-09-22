@@ -8,7 +8,7 @@ from BivariateAnalysis_Class import BivariateOutlier, Bivariate, MethodOfBins
 from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one, try_to_find_file
 from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike, UnivariateGaussianMixtureModel, \
     DeterministicUnivariateProbabilisticModel
-from typing import Union, Tuple, List, Iterable
+from typing import Union, Tuple, List, Iterable, Sequence
 from BivariateAnalysis_Class import Bivariate, MethodOfBins
 from Ploting.fast_plot_Func import *
 from PowerCurve_Class import PowerCurveByMethodOfBins, PowerCurve, PowerCurveByMfr
@@ -34,6 +34,7 @@ from Filtering.sklearn_novelty_and_outlier_detection_Func import *
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from ConvenientDataType import UncertaintyDataFrame
 from tqdm import tqdm
+from parse import parse
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
@@ -68,9 +69,12 @@ class WTandWFBase(PhysicalInstanceDataFrame):
 
     @property
     def default_results_saving_path(self):
-        return {
+        saving_path = {
             "outlier": self.results_path / f"Filtering/{self.__str__()}/results.pkl"
         }
+        for x in saving_path.values():
+            try_to_find_folder_path_otherwise_make_one(x.parent)
+        return saving_path
 
     def plot(self, *,
              ax=None,
@@ -824,16 +828,49 @@ class WF(WTandWFBase):
     def __init__(self, *args, rated_active_power_output: Union[int, float], **kwargs):
         super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
 
+    @property
+    def default_results_saving_path(self):
+        saving_path = {
+            "operating regime": self.results_path / f"OperatingRegime/{self.__str__()}/report.csv"
+        }
+        for x in saving_path.values():
+            try_to_find_folder_path_otherwise_make_one(x.parent)
+        return saving_path
+
     @classmethod
-    def init_from_wind_turbine_instances(cls, wind_turbine_instances: Iterable[WT], *, obj_name: str):
+    def init_from_wind_turbine_instances(cls, wind_turbine_instances: Sequence[WT], *,
+                                         obj_name: str,
+                                         wind_turbine_instances_data_category: Sequence[DataCategoryData] = None):
         """
         To initialise a WF instance from a group of WT instances.
         Can only work on averaging WS and Pout.
+
+        Specifically, if 'wind_turbine_instances_data_category' is provided, then only initialise using 'shutdown',
+        'curtailed', 'operating' WT recordings, and will also return valid total_curtailment_amount
         :return:
         """
         wind_farm_df = pd.DataFrame()
         rated_active_power_output = []
+        total_curtailment_amount = pd.DataFrame()
         for i, this_wind_turbine in enumerate(wind_turbine_instances):
+            this_wind_turbine = copy.deepcopy(this_wind_turbine)
+            # If WT data category information is available
+            if wind_turbine_instances_data_category is not None:
+                # Only consider 'shutdown', 'curtailed', 'operating', the rest (i.e., 'nan') are NaN
+                this_wind_turbine[~wind_turbine_instances_data_category[i](
+                    ('shutdown', 'curtailed', 'operating')
+                )] = np.nan
+                # Curtailment amount is important information, if available
+                total_curtailment_amount = pd.merge(
+                    total_curtailment_amount,
+                    this_wind_turbine[wind_turbine_instances_data_category[i]('curtailed')][['active power output']],
+                    how='outer', left_index=True, right_index=True, suffixes=(f'_WT{i}', f'_WT{i + 1}')
+                )
+            # 'non-missing' means that both the 'wind speed' and 'active power output' must be simultaneously not NaN,
+            # To achieve this, the data will be modified intentionally: i.e., to discard more data
+            any_nan_mask = this_wind_turbine[['wind speed', 'active power output']].isna().any(1).values
+            this_wind_turbine.loc[any_nan_mask, ['wind speed', 'active power output']] = np.nan
+
             rated_active_power_output.append(this_wind_turbine.rated_active_power_output)
             wind_farm_df = pd.merge(wind_farm_df, this_wind_turbine.pd_view()[['wind speed', 'active power output']],
                                     how='outer', left_index=True, right_index=True,
@@ -845,377 +882,126 @@ class WF(WTandWFBase):
         wind_farm_df.columns = new_columns
         # Averaging
         # Note that the treatment for WS and Pout are different
-        # For Pout, equivalent, the non-missing values are summed up and divided by the number of WTs in the WF
+        # For Pout, equivalent, the non-missing values are summed up
         # For WS, equivalent, the non-missing values are averaged directly
-        wind_farm_df['active power output'] = wind_farm_df['active power output'].fillna(value=0)
-        wind_farm_df['active power output'] *= wind_farm_df['active power output'].shape[1]
-        wind_farm_instance = cls(wind_farm_df.mean(1, level='Physical Quantity', skipna=True),
+        # Note 'non-missing' means that both the 'wind speed' and 'active power output' must be simultaneously not NaN
+        wind_farm_df = pd.DataFrame(
+            {'wind speed': wind_farm_df['wind speed'].mean(1, skipna=True).values,
+             'active power output': wind_farm_df['active power output'].sum(1, skipna=True).values},
+            index=wind_farm_df.index
+        )
+
+        wind_farm_instance = cls(wind_farm_df,
                                  rated_active_power_output=sum(rated_active_power_output),
                                  obj_name=obj_name,
                                  predictor_names=('wind speed',),
                                  dependant_names=('active power output',))
-        return wind_farm_instance
-
-    def power_curve_by_method_of_bins(self, cal_region_boundary: bool = False) -> PowerCurveByMethodOfBins:
-        return PowerCurveByMethodOfBins(wind_speed_recording=self['wind speed'].values,
-                                        active_power_output_recording=self['active power output'].values,
-                                        cal_region_boundary=cal_region_boundary)
-
-    # def __str__(self):
-    #     t1 = np_datetime64_to_datetime(self.index.values[0]).strftime('%Y-%m-%d %H.%M')
-    #     t2 = np_datetime64_to_datetime(self.index.values[-1]).strftime('%Y-%m-%d %H.%M')
-    #     current_season = self.get_current_season(season_template=SeasonTemplate1)
-    #     if current_season == 'all seasons':
-    #         return "{} WF from {} to {}".format(self.name, t1, t2)
-    #     else:
-    #         return "{} WF from {} to {} {}".format(self.name, t1, t2, current_season)
-
-    def do_truncate(self, start_time: datetime.datetime = None, end_time: datetime.datetime = None):
-        self.measurements, self.outlier_category, self.outlier_category_detailed = super().do_truncate(
-            start_time=start_time,
-            end_time=end_time
-        )
-        return self.measurements, self.outlier_category, self.outlier_category_detailed
-
-    def down_sample(self, aggregate_on_sample_number: int, aggregate_on_category: Tuple[int, ...] = (0,),
-                    category_is_outlier: bool = True):
-        self.name += '_down_sampled_on_{}'.format(aggregate_on_sample_number)
-        self.measurements, self.outlier_category, self.outlier_category_detailed = super().down_sample(
-            aggregate_on_sample_number,
-            aggregate_on_category,
-            category_is_outlier
-        )
-        return self.measurements, self.outlier_category, self.outlier_category_detailed
+        # Curtailment amount is important information, if available
+        if wind_turbine_instances_data_category is not None:
+            total_curtailment_amount = total_curtailment_amount.reindex(wind_farm_df.index).fillna(0).sum(axis=1)
+        return wind_farm_instance, total_curtailment_amount
 
     @staticmethod
-    def __transform_active_power_output_from_linear_to_original(active_power_output_linear: ndarray,
-                                                                this_path_) -> ndarray:
-        data_preprocessing_params = load_pkl_file(this_path_ + 'data_preprocessing_params.pkl')
-        # 对于区域内的有功功率，进行truncated→linear转换；
-        active_power_output_linear = TruncatedToLinear(
-            data_preprocessing_params['min_active_power_output'],
-            data_preprocessing_params['max_active_power_output']).inverse_transform(active_power_output_linear)
-        return active_power_output_linear
-
-    @staticmethod
-    def __transform_data_to_linear_for_copula_model(data_to_be_transformed: ndarray, path_, dims: int) -> dict:
-        transformed_data = {}.fromkeys(('a', 'b', 'model_boundary', 'a_mask', 'b_mask'))
-        # 载入model_boundary数据
-        model_boundary = load_npy_file(path_ + 'model_boundary.npy')
-        transformed_data['model_boundary'] = model_boundary
-
-        # 确定两个模型的mask
-        _, model_a_global_mask, _, model_b_global_mask, _, _, _ = PowerCurve.cal_region_boundary_mask(
-            model_boundary, data_to_be_transformed[:, 1])
-        transformed_data['a_mask'] = model_a_global_mask
-        transformed_data['b_mask'] = model_b_global_mask
-
-        for i, model_this_global_mask in enumerate((model_a_global_mask, model_b_global_mask)):
-            # 如果在某个区域没数据的话就continue
-            if sum(model_this_global_mask) < 1:
-                continue
-            # 确定转换数据的预处理（线性化）的参数，理论上来说，这些参数只有在fit模型的时候才能被修改
-            this_region = 'a' if i == 0 else 'b'
-            this_path_ = path_ + this_region + '/'
-            this_transformed_data = np.full((sum(model_this_global_mask), dims), np.nan)
-
-            @load_exist_pkl_file_otherwise_run_and_save(this_path_ + 'data_preprocessing_params.pkl')
-            def cal_data_preprocessing_params():
-                min_active_power_output = np.nanmin(data_to_be_transformed[model_this_global_mask, 0])
-                max_active_power_output = np.nanmax(data_to_be_transformed[model_this_global_mask, 0])
-                min_wind_speed = np.nanmin(data_to_be_transformed[model_this_global_mask, 1])
-                max_wind_speed = np.nanmax(data_to_be_transformed[model_this_global_mask, 1])
-
-                return {'min_active_power_output': min_active_power_output - 10e8 * float_eps,
-                        'max_active_power_output': max_active_power_output + 10e8 * float_eps,
-                        'min_wind_speed': min_wind_speed - 10e8 * float_eps,
-                        'max_wind_speed': max_wind_speed + 10e8 * float_eps}
-
-            data_preprocessing_params = cal_data_preprocessing_params
-
-            # 对于区域内的有功功率（默认在第0维），进行truncated→linear转换；
-            this_transformed_data[:, 0] = TruncatedToLinear(
-                data_preprocessing_params['min_active_power_output'],
-                data_preprocessing_params['max_active_power_output']).transform(
-                data_to_be_transformed[model_this_global_mask, 0])
-
-            # 对于区域内的风速（默认在第1维），进行truncated→linear转换；
-            this_transformed_data[:, 1] = TruncatedToLinear(
-                data_preprocessing_params['min_wind_speed'],
-                data_preprocessing_params['max_wind_speed']).transform(
-                data_to_be_transformed[model_this_global_mask, 1])
-            # 对于区域内的温度，不做变换
-            this_transformed_data[:, 2] = copy.deepcopy(data_to_be_transformed[model_this_global_mask, 2])
-
-            transformed_data[this_region] = this_transformed_data
-
-        return transformed_data
-
-    def __prepare_fitting_data_for_copula_model(self, path_, dims) -> dict:
-        """
-        准备copula模型的fitting的输入数据
-        model_a_global_mask和model_b_global_mask代表两个区域/完全不同的两个模型
+    def infer_operating_regime_from_wind_turbine_instances_data_category(
+            wind_turbine_instances_data_category: Sequence[DataCategoryData],
+    ) -> DataCategoryData:
         """
 
-        # 确定模型a和模型b的mask，并且储存boundary的计算值
-        @load_exist_npy_file_otherwise_run_and_save(path_ + 'model_boundary.npy')
-        def identify_model_boundary():
-            pc = PowerCurveByMethodOfBins(self.measurements['wind speed'].values[self.outlier_category == 0],
-                                          self.measurements['active power output'].values[self.outlier_category == 0])
-            return np.array(pc.cal_region_boundary())
-
-        # 将不需要的数据全部置为np.nan
-        fitting_data = np.stack((self.measurements['active power output'].values,
-                                 self.measurements['wind speed'].values,
-                                 self.measurements['environmental temperature'].values),
-                                axis=1)
-        considered_data_mask = np.stack((self.outlier_category_detailed['active power output'].values == 0,
-                                         self.outlier_category_detailed['wind speed'].values == 0,
-                                         self.outlier_category_detailed['environmental temperature'].values == 0),
-                                        axis=1)
-        fitting_data[~considered_data_mask] = np.nan
-
-        return self.__transform_data_to_linear_for_copula_model(fitting_data[:, :3], path_, dims)
-
-    def fit_cvine_gmcm_model(self):
-        """
-        3维模型。维度分别是active power output, wind speed, environmental temperature
-        """
-        path_ = self.results_path + '3d_cvine_gmcm_model/' + self.__str__() + '/'
-        try_to_find_folder_path_otherwise_make_one((path_, path_ + 'a/', path_ + 'b/'))
-        fitting_data = self.__prepare_fitting_data_for_copula_model(path_, 3)
-        for this_region, this_fitting_data in fitting_data.items():
-            if (this_region != 'a') and (this_region != 'b'):
-                continue
-            vine_gmcm_copula = VineGMCMCopula(this_fitting_data,
-                                              construction=THREE_DIM_CVINE_CONSTRUCTION,
-                                              gmcm_model_folder_for_construction_path_=path_ + this_region + '/',
-                                              marginal_distribution_file_=path_ + this_region + '/marginal.pkl')
-            vine_gmcm_copula.fit()
-
-    def plot_wind_speed_to_active_power_output_scatter(self,
-                                                       show_category_as_in_outlier: Union[Tuple[int, ...], str] = None,
-                                                       **kwargs):
-        title = self.name
-        bivariate = Bivariate(self.measurements['wind speed'].values,
-                              self.measurements['active power output'].values,
-                              predictor_var_name='Wind speed (m/s)',
-                              dependent_var_name='Active power output (kW)',
-                              category=self.outlier_category)
-        bivariate.plot_scatter(show_category=show_category_as_in_outlier,
-                               title=title, save_format='png', alpha=0.75,
-                               save_file_=self.results_path + self.name + str(
-                                   show_category_as_in_outlier), x_lim=(0, 28.5),
-                               y_lim=(-self.rated_active_power_output * 0.0125,
-                                      self.rated_active_power_output * 1.02), **kwargs)
-
-    def __train_lstm_model_to_forecast(self,
-                                       training_set_period: Tuple[datetime.datetime,
-                                                                  datetime.datetime],
-                                       validation_pct: float,
-                                       x_time_step: int,
-                                       y_time_step: int,
-                                       train_times: int,
-                                       *, path_: str,
-                                       predictor_var_name_list: List,
-                                       dependent_var_name_list: List):
-        try_to_find_folder_path_otherwise_make_one(path_)
-
-        temp = copy.copy(self)
-        training_validation_set, _, _ = temp.do_truncate(training_set_period[0], training_set_period[1])
-        del temp
-
-        x_train, y_train, x_validation, y_validation = prepare_data_for_nn(
-            datetime_=training_validation_set[['time']].values,
-            x=training_validation_set[predictor_var_name_list].values,
-            y=training_validation_set[dependent_var_name_list].values,
-            validation_pct=validation_pct,
-            x_time_step=x_time_step,
-            y_time_step=y_time_step,
-            path_=path_,
-            including_year=False, including_weekday=False,  # datetime_one_hot_encoder
-        )
-
-        for i in range(train_times):
-            lstm = MatlabLSTM(path_ + 'training_{}.mat'.format(i))
-            lstm.train(x_train, y_train, x_validation, y_validation, int((i + 1.2) * 10000))
-
-    def train_lstm_model_to_forecast_active_power_output(self,
-                                                         training_set_period: Tuple[datetime.datetime,
-                                                                                    datetime.datetime],
-                                                         validation_pct: float = 0.2,
-                                                         x_time_step: int = 144 * 28,
-                                                         y_time_step: int = 144,
-                                                         train_times: int = 6):
-        """
-        用LSTM网络去做active power output的回归。input维度包括：以前的active power output，wind speed和
-        environmental temperature
+        :param wind_turbine_instances_data_category:
         :return:
         """
-        self.__train_lstm_model_to_forecast(training_set_period=training_set_period,
-                                            validation_pct=validation_pct,
-                                            x_time_step=x_time_step,
-                                            y_time_step=y_time_step,
-                                            train_times=train_times,
-                                            path_=''.join((self.results_path, 'LSTM/', self.name + '/')),
-                                            predictor_var_name_list=['wind speed', 'environmental temperature',
-                                                                     'active power output'],
-                                            dependent_var_name_list=['active power output'])
+        # %% Must be note that, in the classification of operating regime, WT-level 'shutdown' and 'nan' are treated
+        # as the same group. Because they both have no contribution to the WF-level total power output calculation.
+        # However, interestingly, note that WF-level wind speed calculate will be different!
+        # Because 'shutdown' can provide OK wind speed, but 'nan' can not, especially due to elementwise deletion.
+        wind_turbine_instances_data_category = copy.deepcopy(wind_turbine_instances_data_category)
+        for obj in wind_turbine_instances_data_category:
+            obj.abbreviation[np.isin(obj.abbreviation, ('shutdown', 'nan'))] = 'shutdown_or_nan'
+        states_unique = ['operating', 'curtailed', 'shutdown_or_nan']
 
-    def train_lstm_model_to_forecast_wind_speed(self,
-                                                training_set_period: Tuple[datetime.datetime,
-                                                                           datetime.datetime],
-                                                validation_pct: float = 0.2,
-                                                x_time_step: int = 144 * 28,
-                                                y_time_step: int = 144,
-                                                train_times: int = 6):
-        self.__train_lstm_model_to_forecast(training_set_period=training_set_period,
-                                            validation_pct=validation_pct,
-                                            x_time_step=x_time_step,
-                                            y_time_step=y_time_step,
-                                            train_times=train_times,
-                                            path_=''.join((self.results_path, 'LSTM/', self.name + '/ws/')),
-                                            predictor_var_name_list=['wind speed'],
-                                            dependent_var_name_list=['wind speed'])
+        def parse_by_states_unique_func(x) -> dict:
+            return parse('(' + ', '.join(map(lambda y: '{' + y + '}', states_unique)) + ')', x).named
 
-    def train_lstm_model_to_forecast_temperature(self,
-                                                 training_set_period: Tuple[datetime.datetime,
-                                                                            datetime.datetime],
-                                                 validation_pct: float = 0.2,
-                                                 x_time_step: int = 144 * 28,
-                                                 y_time_step: int = 144,
-                                                 train_times: int = 6):
-        self.__train_lstm_model_to_forecast(training_set_period=training_set_period,
-                                            validation_pct=validation_pct,
-                                            x_time_step=x_time_step,
-                                            y_time_step=y_time_step,
-                                            train_times=train_times,
-                                            path_=''.join((self.results_path, 'LSTM/', self.name + '/temperature/')),
-                                            predictor_var_name_list=['environmental temperature'],
-                                            dependent_var_name_list=['environmental temperature'])
-
-    def train_lstm_model_to_forecast_wind_speed_and_temperature(self,
-                                                                training_set_period: Tuple[datetime.datetime,
-                                                                                           datetime.datetime],
-                                                                validation_pct: float = 0.2,
-                                                                x_time_step: int = 144 * 28,
-                                                                y_time_step: int = 144,
-                                                                train_times: int = 6):
-        self.__train_lstm_model_to_forecast(training_set_period=training_set_period,
-                                            validation_pct=validation_pct,
-                                            x_time_step=x_time_step,
-                                            y_time_step=y_time_step,
-                                            train_times=train_times,
-                                            path_=''.join((self.results_path, 'LSTM/', self.name + '/ws_temperature/')),
-                                            predictor_var_name_list=['wind speed', 'environmental temperature'],
-                                            dependent_var_name_list=['wind speed', 'environmental temperature'])
-
-    def __test_lstm_model_to_forecast(self,
-                                      test_set_period: Tuple[datetime.datetime,
-                                                             datetime.datetime],
-                                      x_time_step: int,
-                                      y_time_step: int,
-                                      *, path_: str,
-                                      lstm_file_name: str,
-                                      predictor_var_name_list: list,
-                                      dependent_var_name_list: list):
-        temp = copy.copy(self)
-        test_set, _, _ = temp.do_truncate(test_set_period[0], test_set_period[1])
-        del temp
-        x_test, y_test, _, _ = prepare_data_for_nn(
-            datetime_=test_set[['time']].values,
-            x=test_set[predictor_var_name_list].values,
-            y=test_set[dependent_var_name_list].values,
-            validation_pct=0,
-            x_time_step=x_time_step,
-            y_time_step=y_time_step,
-            path_=path_,
-            including_year=False, including_weekday=False,  # datetime_one_hot_encoder
+        # %% Obtain a pd.DataFrame obj that stores all WT-level information for convenience
+        wind_turbine_instances_data_category_df = pd.DataFrame(dtype=str)
+        for i, this_wind_turbine_instances_data_category in enumerate(wind_turbine_instances_data_category):
+            wind_turbine_instances_data_category_df = pd.merge(
+                wind_turbine_instances_data_category_df,
+                this_wind_turbine_instances_data_category.pd_view,
+                how='outer', left_index=True, right_index=True,
+                suffixes=(f'_WT{i}', f'_WT{i + 1}')
+            )
+        wind_turbine_instances_data_category_df.fillna('shutdown_or_nan', inplace=True)
+        wind_turbine_instances_data_category_df = wind_turbine_instances_data_category_df.astype(str)
+        # %% Obtain a pd.DataFrame obj from the WF-level point of view
+        operating_regime_df = pd.DataFrame(
+            columns=states_unique + ['combination'],
+            index=wind_turbine_instances_data_category_df.index,
         )
-        lstm = MatlabLSTM(path_ + lstm_file_name)
-        lstm_predict = lstm.test(x_test)
+        for this_state in states_unique:
+            operating_regime_df[this_state] = np.sum(
+                wind_turbine_instances_data_category_df.values == this_state, 1
+            ).astype(int)
 
-        ax = series(y_test.flatten())
-        ax = series(lstm_predict.flatten(), ax=ax)
+        assert (int(np.unique(np.sum(operating_regime_df[states_unique].values, 1))) == len(
+            wind_turbine_instances_data_category)), "'wind_turbine_instances_data_category' sum on axis_1 is wrong"
+        operating_regime_df['combination'] = list(zip(*operating_regime_df[states_unique].values.T))
+        operating_regime_df['combination'] = operating_regime_df['combination'].astype(str)
+        # %% Infer a DataCategoryNameMapper obj
+        combination_unique = np.unique(operating_regime_df['combination'])
+        combination_unique = sorted(combination_unique,
+                                    key=lambda x: (parse_by_states_unique_func(x)['operating'],
+                                                   parse_by_states_unique_func(x)['curtailed'],
+                                                   parse_by_states_unique_func(x)['shutdown_or_nan']),
+                                    reverse=True)
+        operating_regime_name_mapper = DataCategoryNameMapper.init_from_template()
+        abbreviation_i = 0
+        for i, this_combination in enumerate(combination_unique):
+            # The rules for not considering:
+            # WF-level outliers: if there are any WT recordings unexplainable
+            if np.sum(this_combination == operating_regime_df['combination']) / len(operating_regime_df) < 0.0001:
+                # if int(parse_by_states_unique_func(this_combination)['nan']) > 0:
+                abbreviation_set = 'others'
+            else:
+                abbreviation_i += 1
+                abbreviation_set = f"S{abbreviation_i}"
+            operating_regime_name_mapper.loc[i] = [this_combination,
+                                                   abbreviation_set,
+                                                   -1,
+                                                   parse_by_states_unique_func(this_combination).__str__()]
+        # %% Obtain a DataCategoryData obj
+        operating_regime = DataCategoryData(
+            abbreviation=operating_regime_name_mapper.convert_sequence_data_key(
+                'long name',
+                'abbreviation',
+                sequence_data=operating_regime_df['combination']
+            ),
+            index=operating_regime_df.index,
+            name_mapper=operating_regime_name_mapper
+        )
+        # operating_regime.report(sorted_kwargs={'key': lambda x: "0" + x[1:] if x[1:].__len__() < 2 else x[1:]})
+        return operating_regime
 
-        return lstm_predict
-
-    def test_lstm_model_to_forecast_active_power_output(self,
-                                                        test_set_period: Tuple[datetime.datetime,
-                                                                               datetime.datetime],
-                                                        x_time_step: int = 144 * 28,
-                                                        y_time_step: int = 144,
-                                                        *, lstm_file_name: str):
-        results = self.__test_lstm_model_to_forecast(test_set_period=test_set_period,
-                                                     x_time_step=x_time_step,
-                                                     y_time_step=y_time_step,
-                                                     path_=''.join((self.results_path, 'LSTM/', self.name + '/')),
-                                                     lstm_file_name=lstm_file_name,
-                                                     predictor_var_name_list=['wind speed', 'environmental temperature',
-                                                                              'active power output'],
-                                                     dependent_var_name_list=['active power output'])
-        return results
-
-    def test_lstm_model_to_forecast_wind_speed(self,
-                                               test_set_period: Tuple[datetime.datetime,
-                                                                      datetime.datetime],
-                                               x_time_step: int = 144 * 28,
-                                               y_time_step: int = 144,
-                                               *, lstm_file_name: str):
-        results = self.__test_lstm_model_to_forecast(test_set_period=test_set_period,
-                                                     x_time_step=x_time_step,
-                                                     y_time_step=y_time_step,
-                                                     path_=''.join((self.results_path, 'LSTM/', self.name + '/ws/')),
-                                                     lstm_file_name=lstm_file_name,
-                                                     predictor_var_name_list=['wind speed'],
-                                                     dependent_var_name_list=['wind speed'])
-        return results
-
-    def test_lstm_model_to_forecast_temperature(self,
-                                                test_set_period: Tuple[datetime.datetime,
-                                                                       datetime.datetime],
-                                                x_time_step: int = 144 * 28,
-                                                y_time_step: int = 144,
-                                                *, lstm_file_name: str):
-        results = self.__test_lstm_model_to_forecast(test_set_period=test_set_period,
-                                                     x_time_step=x_time_step,
-                                                     y_time_step=y_time_step,
-                                                     path_=''.join(
-                                                         (self.results_path, 'LSTM/', self.name + '/temperature/')),
-                                                     lstm_file_name=lstm_file_name,
-                                                     predictor_var_name_list=['environmental temperature'],
-                                                     dependent_var_name_list=['environmental temperature'])
-        return results
-
-    def test_lstm_model_to_forecast_wind_speed_and_temperature(self,
-                                                               test_set_period: Tuple[datetime.datetime,
-                                                                                      datetime.datetime],
-                                                               x_time_step: int = 144 * 28,
-                                                               y_time_step: int = 144,
-                                                               *, lstm_file_name: str):
-        results = self.__test_lstm_model_to_forecast(test_set_period=test_set_period,
-                                                     x_time_step=x_time_step,
-                                                     y_time_step=y_time_step,
-                                                     path_=''.join((self.results_path, 'LSTM/',
-                                                                    self.name + '/ws_temperature/')),
-                                                     lstm_file_name=lstm_file_name,
-
-                                                     predictor_var_name_list=['wind speed',
-                                                                              'environmental temperature'],
-                                                     dependent_var_name_list=['wind speed',
-                                                                              'environmental temperature'])
-        return results
-
-    def cal_measurements_from_wind_turbine_objects(self,
-                                                   wt_obj_in_iterator: Tuple[WT, ...],
-                                                   considered_outlier_category: ndarray):
-        """
-        从一组wind turbine对象生成它们组成的wind farm对象。这是个naive的aggregate方法。不包含wind farm的filling missing方法。
-        :param wt_obj_in_iterator:
-        :param considered_outlier_category:
-        :return:
-        """
-        pass
+    def plot(self, *,
+             ax=None,
+             plot_mfr: Iterable[PowerCurveByMfr] = None,
+             operating_regime: DataCategoryData = None,
+             plot_individual: bool = False,
+             **kwargs):
+        if operating_regime is None:
+            ax = super(WF, self).plot(ax=ax, plot_mfr=plot_mfr, **kwargs)
+        else:
+            for this_operating_regime in np.unique(operating_regime.abbreviation):
+                if this_operating_regime in ('S1', 'others'):
+                    continue
+                this_operating_regime_mask = operating_regime(this_operating_regime)
+                ax = scatter(self[this_operating_regime_mask]['wind speed'],
+                             self[this_operating_regime_mask]['active power output'] / self.rated_active_power_output,
+                             ax=ax if not plot_individual else None,
+                             **kwargs)
+            ax = super(WF, self[operating_regime('S1')]).plot(ax=ax if not plot_individual else None,
+                                                              plot_mfr=plot_mfr, zorder=-1, **kwargs)
+        return ax
 
 
 if __name__ == '__main__':

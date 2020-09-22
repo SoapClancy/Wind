@@ -1,7 +1,7 @@
 from Ploting.fast_plot_Func import *
 from PowerCurve_Class import PowerCurveByMfr, PowerCurveFittedBy5PLF
 from File_Management.load_save_Func import load_pkl_file
-from File_Management.path_and_file_management_Func import try_to_find_file
+from File_Management.path_and_file_management_Func import try_to_find_file, try_to_find_folder_path_otherwise_make_one
 from project_utils import project_path_, WS_POUT_SCATTER_ALPHA, WS_POUT_2D_PLOT_KWARGS, WS_POUT_SCATTER_SIZE
 from ErrorEvaluation_Class import DeterministicError
 import pandas as pd
@@ -15,6 +15,8 @@ from Data_Preprocessing.float_precision_control_Func import \
 from ConvenientDataType import UncertaintyDataFrame
 from Ploting.adjust_Func import *
 from File_Management.path_and_file_management_Func import remove_win10_max_path_limit
+from Filtering.OutlierAnalyser_Class import DataCategoryNameMapper
+from typing import Tuple
 
 remove_win10_max_path_limit()
 
@@ -29,16 +31,17 @@ MFR_PC_LIMIT = (PowerCurveByMfr(air_density='0.97'), PowerCurveByMfr(air_density
 # %% Darly wind turbines
 DARLY_WIND_TURBINES = load_raw_wt_from_txt_file_and_temperature_from_csv()
 # This paper essentially only have 2D analysis
-for i in range(DARLY_WIND_TURBINES.__len__()):
-    DARLY_WIND_TURBINES[i].predictor_names = ('wind speed',)
+for i_outer in range(DARLY_WIND_TURBINES.__len__()):
+    DARLY_WIND_TURBINES[i_outer].predictor_names = ('wind speed',)
+del i_outer
 # Darly WT2 is of the most interest
 DARLY_WIND_TURBINE_2 = DARLY_WIND_TURBINES[1]  # type: WT
 # WT outlier results
 DARLY_WIND_TURBINES_OUTLIERS = []
-for this_wind_turbine in DARLY_WIND_TURBINES:
-    DARLY_WIND_TURBINES_OUTLIERS.append(load_pkl_file(this_wind_turbine.default_results_saving_path["outlier"]))
+for this_wind_turbine_outer in DARLY_WIND_TURBINES:
+    DARLY_WIND_TURBINES_OUTLIERS.append(load_pkl_file(this_wind_turbine_outer.default_results_saving_path["outlier"]))
 
-DARLY_WIND_FARM = WF.init_from_wind_turbine_instances(DARLY_WIND_TURBINES, obj_name='Dalry')  # type: WF
+DARLY_WIND_FARM_RAW, _ = WF.init_from_wind_turbine_instances(DARLY_WIND_TURBINES, obj_name='Dalry raw')  # type: WF
 
 
 # %% Zelengrad WF
@@ -248,7 +251,7 @@ def plot_raw_data_for_outlier_demo():
     :return:
     """
 
-    for to_plot_obj in (DARLY_WIND_TURBINE_2, DARLY_WIND_FARM, ZELENGRAD_WIND_FARM):
+    for to_plot_obj in (DARLY_WIND_TURBINE_2, DARLY_WIND_FARM_RAW, ZELENGRAD_WIND_FARM):
         exec("to_plot_obj.plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True)")
 
 
@@ -272,8 +275,56 @@ def wind_turbine_level_outlier_results_demo():
     # DARLY_WIND_TURBINE_2.outlier_report()
 
 
-def darly_wind_farm_init():
-    pass
+def darly_wind_farm_operating_regime():
+    # %% Select by wind turbines outliers
+    # In the WF analyse, only 'CAT-I.a', 'CAT-I.b', 'CAT-II', 'CAT-IV.a' and 'others' WT recordings are used
+    # wind_turbines_with_selected_recordings = []
+    wind_turbine_instances_data_category = []
+    for i in range(DARLY_WIND_TURBINES_OUTLIERS.__len__()):
+        # %% rename to adapt to WF-level analysis, and the rules below are used:
+        # 'CAT-I.a', 'CAT-I.b' are 'shutdown'
+        # 'CAT-II' are 'curtailed'
+        # 'CAT-IV.a' and 'others' are 'operating'
+        this_outlier = DARLY_WIND_TURBINES_OUTLIERS[i]['DataCategoryData obj']
+        this_outlier.rename(
+            mapper={'CAT-I.a': 'shutdown', 'CAT-I.b': 'shutdown',
+                    'CAT-II': 'curtailed',
+                    'CAT-IV.a': 'operating', 'others': 'operating',
+                    'CAT-III': 'nan', 'CAT-IV.b': 'nan', 'missing': 'nan'},
+            new_name_mapper=DataCategoryNameMapper(
+                [["shutdown", "shutdown", 3, "originally be either CAT-I.a or CAT-I.b"],
+                 ["curtailed", "curtailed", 2, "originally be CAT-II"],
+                 ["operating", "operating", 1, "originally be either CAT-IV.a or others"],
+                 ["nan", "nan", -1, "originally be either CAT-III, CAT-IV.b or missing"]],
+                columns=['long name', 'abbreviation', 'code', 'description']
+            )
+        )
+        wind_turbine_instances_data_category.append(this_outlier)
+
+    darly_wind_farm, darly_wind_farm_total_curtailment_amount = WF.init_from_wind_turbine_instances(
+        DARLY_WIND_TURBINES,
+        obj_name='Dalry',
+        wind_turbine_instances_data_category=wind_turbine_instances_data_category
+    )
+    del i, this_outlier
+
+    # %% Infer WF data category by looking at individual WT outlier information (Sequence[DataCategoryData])
+    operating_regime = WF.infer_operating_regime_from_wind_turbine_instances_data_category(
+        wind_turbine_instances_data_category
+    )
+
+    # %% Plot
+    # DARLY_WIND_FARM_RAW.plot(plot_mfr=MFR_PC_LIMIT)
+    # darly_wind_farm.plot(plot_mfr=MFR_PC_LIMIT)
+    # darly_wind_farm[operating_regime('S1')].plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True)
+    # darly_wind_farm.plot(operating_regime=operating_regime, plot_mfr=MFR_PC_LIMIT)
+
+    # %% report
+    operating_regime.report(
+        sorted_kwargs={'key': lambda x: "0" + x[1:] if x[1:].__len__() < 2 else x[1:]},
+        report_pd_to_csv_file_path=darly_wind_farm.default_results_saving_path['operating regime']
+    )
+    return darly_wind_farm, darly_wind_farm_total_curtailment_amount, operating_regime
 
 
 if __name__ == '__main__':
@@ -285,4 +336,4 @@ if __name__ == '__main__':
     # individual_wind_turbine_outliers_outlier_detector()
     # wind_turbine_level_outlier_results_demo()
 
-    darly_wind_farm_init()
+    darly_wind_farm_operating_regime()
