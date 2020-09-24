@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from Regression_Analysis.DeepLearning_Class import datetime_one_hot_encoder, MatlabLSTM, \
     prepare_data_for_nn
 import numpy as np
@@ -11,7 +13,7 @@ from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike,
 from typing import Union, Tuple, List, Iterable, Sequence
 from BivariateAnalysis_Class import Bivariate, MethodOfBins
 from Ploting.fast_plot_Func import *
-from PowerCurve_Class import PowerCurveByMethodOfBins, PowerCurve, PowerCurveByMfr
+from PowerCurve_Class import PowerCurveByMethodOfBins, PowerCurve, PowerCurveByMfr, PowerCurveFittedBy8PLF
 from Filtering.simple_filtering_Func import linear_series_outlier, out_of_range_outlier, \
     change_point_outlier_by_sliding_window_and_interquartile_range
 from Data_Preprocessing.TruncatedOrCircularToLinear_Class import TruncatedToLinear, CircularToLinear
@@ -204,11 +206,11 @@ class WT(WTandWFBase):
                                     'wind speed std.',
                                     'active power output',
                                     'air density']][outlier('CAT-IV')]
-        current_cat_iv_data['Mfr-PC obj'] = PowerCurveByMfr.init_multiple_instances(
+        current_cat_iv_data['Mfr PC obj'] = PowerCurveByMfr.init_multiple_instances(
             air_density=current_cat_iv_data['air density'].values)
         # To find the recordings with same wind speed, wind speed std., and air density. This will increase the
         # computation efficiency in further simulation
-        unique_rows, unique_label = current_cat_iv_data.unique(['wind speed', 'wind speed std.', 'Mfr-PC obj'])
+        unique_rows, unique_label = current_cat_iv_data.unique(['wind speed', 'wind speed std.', 'Mfr PC obj'])
         # Use the buffer
         buffer = try_to_find_file(save_file_path.parent / 'temp.pkl')
         if buffer:
@@ -233,8 +235,8 @@ class WT(WTandWFBase):
                 traces_number_for_each_recording=1_000_000,
                 sigma_func=sigma_func
             )
-            # prepare mfr-pc
-            this_unique_mfr_pc = this_unique_row['Mfr-PC obj']
+            # prepare mfr pc
+            this_unique_mfr_pc = this_unique_row['Mfr PC obj']
             this_pout_uncertainty = this_unique_mfr_pc.cal_with_hysteresis_control_using_high_resol_wind(
                 high_resol_wind,
                 return_percentiles=UncertaintyDataFrame.init_from_template(
@@ -828,19 +830,12 @@ class WF(WTandWFBase):
     def __init__(self, *args, rated_active_power_output: Union[int, float], **kwargs):
         super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
 
-    @property
-    def default_results_saving_path(self):
-        saving_path = {
-            "operating regime": self.results_path / f"OperatingRegime/{self.__str__()}/report.csv"
-        }
-        for x in saving_path.values():
-            try_to_find_folder_path_otherwise_make_one(x.parent)
-        return saving_path
-
     @classmethod
-    def init_from_wind_turbine_instances(cls, wind_turbine_instances: Sequence[WT], *,
-                                         obj_name: str,
-                                         wind_turbine_instances_data_category: Sequence[DataCategoryData] = None):
+    def init_from_wind_turbine_instances(
+            cls, wind_turbine_instances: Sequence[WT], *,
+            obj_name: str,
+            wind_turbine_instances_data_category: Sequence[DataCategoryData] = None
+    ) -> Tuple[WF, pd.DataFrame]:
         """
         To initialise a WF instance from a group of WT instances.
         Can only work on averaging WS and Pout.
@@ -900,6 +895,16 @@ class WF(WTandWFBase):
         if wind_turbine_instances_data_category is not None:
             total_curtailment_amount = total_curtailment_amount.reindex(wind_farm_df.index).fillna(0).sum(axis=1)
         return wind_farm_instance, total_curtailment_amount
+
+    @property
+    def default_results_saving_path(self):
+        saving_path = {
+            "operating regime": self.results_path / f"OperatingRegime/{self.__str__()}/report.csv",
+            "fully operating regime power curve": self.results_path / f"PowerCurve/{self.__str__()}/fully_OPR_8PL.pkl",
+        }
+        for x in saving_path.values():
+            try_to_find_folder_path_otherwise_make_one(x.parent)
+        return saving_path
 
     @staticmethod
     def infer_operating_regime_from_wind_turbine_instances_data_category(
