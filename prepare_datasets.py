@@ -29,7 +29,6 @@ def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
     }
 
     for dir_name, subdir_list, file_list in os.walk(Croatia_RAW_DATA_PATH):
-        # TODO
         if subdir_list:
             continue
         # May only need to fetch specific wind farm

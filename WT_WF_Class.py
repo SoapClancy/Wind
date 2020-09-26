@@ -13,7 +13,7 @@ from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike,
 from typing import Union, Tuple, List, Iterable, Sequence
 from BivariateAnalysis_Class import Bivariate, MethodOfBins
 from Ploting.fast_plot_Func import *
-from PowerCurve_Class import PowerCurveByMethodOfBins, PowerCurve, PowerCurveByMfr, PowerCurveFittedBy8PLF
+from PowerCurve_Class import *
 from Filtering.simple_filtering_Func import linear_series_outlier, out_of_range_outlier, \
     change_point_outlier_by_sliding_window_and_interquartile_range
 from Data_Preprocessing.TruncatedOrCircularToLinear_Class import TruncatedToLinear, CircularToLinear
@@ -34,7 +34,7 @@ import re
 from Filtering.OutlierAnalyser_Class import DataCategoryNameMapper, DataCategoryData
 from Filtering.sklearn_novelty_and_outlier_detection_Func import *
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from ConvenientDataType import UncertaintyDataFrame
+from ConvenientDataType import UncertaintyDataFrame, StrOneDimensionNdarray
 from tqdm import tqdm
 from parse import parse
 
@@ -68,15 +68,6 @@ class WTandWFBase(PhysicalInstanceDataFrame):
             # Make all 1.0 p.u. ~ 1.02 p.u. Pout to be equal to 1.0 p.u.
             self.loc[self['active power output'].between(*self.rated_active_power_output * np.array([1, 1.02])),
                      'active power output'] = self.rated_active_power_output
-
-    @property
-    def default_results_saving_path(self):
-        saving_path = {
-            "outlier": self.results_path / f"Filtering/{self.__str__()}/results.pkl"
-        }
-        for x in saving_path.values():
-            try_to_find_folder_path_otherwise_make_one(x.parent)
-        return saving_path
 
     def plot(self, *,
              ax=None,
@@ -123,7 +114,16 @@ class WT(WTandWFBase):
         super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
 
     @property
-    def data_category_name_mapper(self) -> DataCategoryNameMapper:
+    def default_results_saving_path(self):
+        saving_path = {
+            "outlier": self.results_path / f"Filtering/{self.__str__()}/results.pkl"
+        }
+        for x in saving_path.values():
+            try_to_find_folder_path_otherwise_make_one(x.parent)
+        return saving_path
+
+    @property
+    def outlier_name_mapper(self) -> DataCategoryNameMapper:
         meta = [["missing data", "missing", -1, "N/A"],
                 ["others", "others", 0, "N/A"],
                 ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
@@ -141,7 +141,6 @@ class WT(WTandWFBase):
                          save_file_path: Path = None) -> DataCategoryData:
         assert (how_to_detect_scattered in ('isolation forest', 'hist')), "Check 'how_to_detect_scattered'"
         save_file_path = save_file_path or self.default_results_saving_path["outlier"]
-        try_to_find_folder_path_otherwise_make_one(save_file_path.parent)
         if try_to_find_file(save_file_path):
             warnings.warn(f"{self.__str__()} has results in {save_file_path}")
             return load_pkl_file(save_file_path)['DataCategoryData obj']
@@ -567,7 +566,6 @@ class WT(WTandWFBase):
                               self.measurements['active power output'].values[mask],
                               bin_step=bin_step)
 
-        # TODO 全部换成Path类
         @load_exist_pkl_file_otherwise_run_and_save(_path + (kwargs.get('model_name') or 'model.pkl'))
         def load_or_make():
             return bivariate.fit_mob_using_gaussian_mixture_model(**gmm_args)
@@ -827,8 +825,12 @@ class WT(WTandWFBase):
 
 
 class WF(WTandWFBase):
-    def __init__(self, *args, rated_active_power_output: Union[int, float], **kwargs):
+    __slots__ = ("cut_in_wind_speed", "cut_out_wind_speed", "rated_active_power_output", "number_of_wind_turbine")
+
+    def __init__(self, *args, rated_active_power_output: Union[int, float],
+                 number_of_wind_turbine: int = None, **kwargs):
         super().__init__(*args, rated_active_power_output=rated_active_power_output, **kwargs)
+        self.number_of_wind_turbine = number_of_wind_turbine
 
     @classmethod
     def init_from_wind_turbine_instances(
@@ -888,6 +890,7 @@ class WF(WTandWFBase):
 
         wind_farm_instance = cls(wind_farm_df,
                                  rated_active_power_output=sum(rated_active_power_output),
+                                 number_of_wind_turbine=wind_turbine_instances.__len__(),
                                  obj_name=obj_name,
                                  predictor_names=('wind speed',),
                                  dependant_names=('active power output',))
@@ -899,8 +902,21 @@ class WF(WTandWFBase):
     @property
     def default_results_saving_path(self):
         saving_path = {
+            "outlier": self.results_path / f"Filtering/{self.__str__()}/results.pkl",
+
             "operating regime": self.results_path / f"OperatingRegime/{self.__str__()}/report.csv",
+
+            "operating regime initial guess": self.results_path / f"OperatingRegime/{self.__str__()}/"
+                                                                  f"operating_regime_initial_guess.pkl",
+
+            "operating regime single senor classification": self.results_path / f"OperatingRegime/{self.__str__()}/"
+                                                                                f"single_sensor_classification.pkl",
+
             "fully operating regime power curve": self.results_path / f"PowerCurve/{self.__str__()}/fully_OPR_8PL.pkl",
+
+            "fully operating regime power curve single senor": self.results_path / f"PowerCurve/{self.__str__()}/"
+                                                                                   f"fully_OPR_8PL_single_senor.pkl",
+
         }
         for x in saving_path.values():
             try_to_find_folder_path_otherwise_make_one(x.parent)
@@ -986,6 +1002,196 @@ class WF(WTandWFBase):
         )
         # operating_regime.report(sorted_kwargs={'key': lambda x: "0" + x[1:] if x[1:].__len__() < 2 else x[1:]})
         return operating_regime
+
+    @property
+    def outlier_name_mapper(self) -> DataCategoryNameMapper:
+        meta = [["missing data", "missing", -1, "N/A"],
+                ["others", "others", 0, "N/A"],
+                ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"]]
+        mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
+        mapper[:] = meta
+        return mapper
+
+    def outlier_detector(self, *data_category_is_linearity_args,
+                         save_file_path: Path = None,
+                         **data_category_is_linearity_kwargs) -> DataCategoryData:
+        save_file_path = save_file_path or self.default_results_saving_path["outlier"]
+        if try_to_find_file(save_file_path):
+            warnings.warn(f"{self.__str__()} has results in {save_file_path}")
+            return load_pkl_file(save_file_path)['DataCategoryData obj']
+        outlier = super().outlier_detector()  # type: DataCategoryData
+        # %% CAT-III
+        if data_category_is_linearity_args == ():
+            data_category_is_linearity_args = ('60T',)
+        if data_category_is_linearity_kwargs == {}:
+            data_category_is_linearity_kwargs = {"constant_error": {'wind speed': 0.01}}
+        cat_iii_outlier_mask = self.data_category_is_linearity(*data_category_is_linearity_args,
+                                                               **data_category_is_linearity_kwargs)
+        outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
+        ################################################################################################################
+        # outlier = super(WF, self).outlier_detector()  # type: DataCategoryData
+        # cat_iii_outlier_mask = self.data_category_is_linearity('20T', constant_error={'wind speed': 0.0001})
+        # outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
+        # ax = self[outlier('CAT-III')].plot(color='r')
+        # ax = self[outlier('others')].plot(ax=ax)
+        # self[outlier('CAT-III')].plot(color='r')
+        # self[outlier('others')].plot()
+        # outlier.report()
+        # debug_see = self[outlier('CAT-III')].pd_view()
+        ################################################################################################################
+        save_pkl_file(save_file_path,
+                      {'raw_ndarray_data': np.array(outlier.abbreviation),
+                       'raw_index': outlier.index,
+                       'DataCategoryData obj': outlier})
+        return outlier
+
+    def operating_regime_detector_initial_guess(self, *, save_file_path: Path = None) -> dict:
+        save_file_path = save_file_path or self.default_results_saving_path["operating regime initial guess"]
+        if try_to_find_file(save_file_path):
+            warnings.warn(f"{self.__str__()} has results in {save_file_path}")
+            return load_pkl_file(save_file_path)
+        # %% Define a DataCategoryNameMapper obj to store all possible situations.
+        # Also store the expected rated power output in each operating regime if possible (i.e., curtailed == 0)
+        operating_regime_name_mapper = DataCategoryNameMapper.init_from_template()
+        expected_rated_power_output_in_operating_regime = {}
+        for i in range(self.number_of_wind_turbine, -1, -1):
+            operating = i
+            for j in (0, 1):
+                curtailed = j
+                shutdown_or_nan = self.number_of_wind_turbine - operating - curtailed
+                if not all((0 <= operating <= self.number_of_wind_turbine,
+                            0 <= curtailed <= 1,
+                            0 <= shutdown_or_nan <= self.number_of_wind_turbine)):
+                    continue
+                this_row_meta = {"operating": operating, "curtailed": curtailed, "shutdown_or_nan": shutdown_or_nan}
+                # Update operating_regime_name_mapper
+                operating_regime_name_mapper = pd.concat(
+                    (operating_regime_name_mapper,
+                     pd.DataFrame({"long name": f"({operating}, {curtailed}, {shutdown_or_nan})",
+                                   "abbreviation": f"S{len(operating_regime_name_mapper)}",
+                                   "code": -1,
+                                   "description": str(this_row_meta)}, index=[0])),
+                    ignore_index=True
+                )
+                # Update expected_rated_power_output_in_operating_regime
+                if curtailed == 0:
+                    expected_rated_power_output_in_operating_regime.update(
+                        {f"({operating}, {curtailed}, {shutdown_or_nan})": 1 / self.number_of_wind_turbine * operating}
+                    )
+        operating_regime_name_mapper = operating_regime_name_mapper.drop(0).reindex()
+        expected_rated_power_output_in_operating_regime = pd.Series(expected_rated_power_output_in_operating_regime)
+        del i, operating, curtailed, shutdown_or_nan, this_row_meta, j
+
+        # %% Initialise a DataCategoryData obj for storing the classification results
+        operating_regime = DataCategoryData(
+            abbreviation=StrOneDimensionNdarray(['nan'] * self.index.__len__()).astype("U18"),
+            index=self.index,
+            name_mapper=operating_regime_name_mapper
+        )
+        # %% To find the flat power output in the Pout-WS 2D scatter plot
+        flat_power_output_mask = self.data_category_is_linearity(
+            '30T',
+            constant_error={'active power output': self.rated_active_power_output * 0.0005}
+        )
+        # Assign operating regime to actual measurements according to flat_power_output_mask,
+        # operating_regime_name_mapper, and expected_rated_power_output_in_operating_regime
+        for this_index in self.index[flat_power_output_mask]:
+            this_power_output = self.loc[this_index, 'active power output'] / self.rated_active_power_output
+            # Find the closest
+            this_delta = this_power_output - expected_rated_power_output_in_operating_regime  # type: pd.Series
+            this_delta_abs = np.abs(this_delta)  # type: pd.Series
+            this_delta_min, this_delta_min_index = this_delta_abs.min(), this_delta_abs.idxmin()
+            this_index_mask = operating_regime.index == this_index
+            # Can only be sure about very close values
+            if this_delta_min <= 0.01:
+                operating_regime.abbreviation[this_index_mask] = this_delta_min_index
+            else:
+                parse_temp = parse("({}, 0, {})", this_delta[this_delta.values > 0].index[0])
+                operating_temp, shutdown_or_nan = int(parse_temp[0]), int(parse_temp[1])
+                operating_regime.abbreviation[this_index_mask] = f"({operating_temp}, 1, {shutdown_or_nan - 1})"
+        del this_index, this_index_mask, this_delta, this_delta_abs, this_delta_min, this_delta_min_index, \
+            this_power_output, operating_temp, shutdown_or_nan, parse_temp
+        # There are parts of results are sure
+        operating_regime_sure = copy.deepcopy(operating_regime)
+        # %% Fill-missing, by Mfr PC 1.12
+        middle_mfr_pc = PowerCurveByMfr('1.12')
+        for this_index in self.index[~flat_power_output_mask]:
+            this_wind_speed = self.loc[this_index, 'wind speed']
+            this_power_output = self.loc[this_index, 'active power output'] / self.rated_active_power_output
+            if np.isnan(this_wind_speed) or np.isnan(this_power_output):
+                continue
+            # Obtain potential candidates
+            pout_by_middle_mfr_pc_candidates = pd.Series(
+                index=expected_rated_power_output_in_operating_regime.index,
+                data=expected_rated_power_output_in_operating_regime.values * middle_mfr_pc(this_wind_speed)
+            )
+            # Find the closest
+            this_delta_abs = np.abs(this_power_output - pout_by_middle_mfr_pc_candidates)  # type: pd.Series
+            this_delta_min_index = this_delta_abs.idxmin()
+            operating_regime.abbreviation[operating_regime.index == this_index] = this_delta_min_index
+
+        results = {'operating_regime': operating_regime, 'operating_regime_sure': operating_regime_sure}
+        save_pkl_file(save_file_path, results)
+        return results
+
+    def operating_regime_detector(self, *, save_file_path: Path = None,
+                                  initial_guess_results: dict = None,
+                                  whether_start_or_continue_fitting: bool = True) -> DataCategoryData:
+        if save_file_path is None:
+            save_file_path = self.default_results_saving_path["operating regime single senor classification"]
+        if try_to_find_file(save_file_path):
+            warnings.warn(f"{self.__str__()} has operating regime single senor classification in {save_file_path}")
+            return load_pkl_file(save_file_path)
+
+        # %% Check whether initial_guess_results is available
+        if initial_guess_results is None:
+            initial_guess_results = load_pkl_file(self.default_results_saving_path["operating regime initial guess"])
+            if initial_guess_results is None:
+                raise FileNotFoundError("Should specify 'initial_guess_results' or run instance method"
+                                        "'operating_regime_detector_initial_guess'")
+        operating_regime = initial_guess_results['operating_regime']  # type: DataCategoryData
+        operating_regime_sure = initial_guess_results['operating_regime_sure']  # type: DataCategoryData
+
+        # %% Prepare run the GA for a EquivalentWindFarmPowerCurve obj
+        wf_pc_obj = EquivalentWindFarmPowerCurve(
+            total_wind_turbine_number=self.number_of_wind_turbine,
+            wind_speed_recording=self['wind speed'].values,
+            active_power_output_recording=self['active power output'].values / self.rated_active_power_output,
+        )
+        # If there are any fitting results in the saving path, then they can be used as initials
+        fitting_path = self.default_results_saving_path["fully operating regime power curve single senor"]  # type:Path
+        current_best = None
+        if try_to_find_file(fitting_path):
+            current_best = load_pkl_file(fitting_path)[-1]['variable'][:8]
+            wf_pc_obj.update_params(*current_best)  # The last the best
+            params_init_scheme = 'self'
+            operating_wind_turbine_number_trainable_last_run = load_pkl_file(fitting_path)[-1]['variable'][8:]
+        else:
+            params_init_scheme = 'guess'
+            operating_wind_turbine_number_trainable_last_run = None
+
+        # Start or continue fitting
+        if whether_start_or_continue_fitting:
+            wf_pc_obj.fit(
+                ga_algorithm_param={'max_num_iteration': 200, 'max_iteration_without_improv': 10000},
+                params_init_scheme=params_init_scheme,
+                run_n_times=300,
+                save_to_file_path=fitting_path,
+                focal_error=0,
+                operating_regime=operating_regime,
+                operating_regime_sure=operating_regime_sure,
+                operating_wind_turbine_number_trainable_last_run=operating_wind_turbine_number_trainable_last_run,
+                function_timeout=6000
+            )
+        # If no fitting needed, then update to be a perfect (e.g., already trained) power curve
+        else:
+            tt = 1
+            debug_var = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
+            debug_var.update_params(*current_best)
+            print(debug_var)
+
+            ax = debug_var.plot()
+            ax = self.plot(ax=ax)
 
     def plot(self, *,
              ax=None,
