@@ -1136,7 +1136,7 @@ class WF(WTandWFBase):
 
     def operating_regime_detector(self, *, save_file_path: Path = None,
                                   initial_guess_results: dict = None,
-                                  whether_start_or_continue_fitting: bool = True) -> DataCategoryData:
+                                  ga_max_num_iteration: int = None) -> DataCategoryData:
         if save_file_path is None:
             save_file_path = self.default_results_saving_path["operating regime single senor classification"]
         if try_to_find_file(save_file_path):
@@ -1171,13 +1171,15 @@ class WF(WTandWFBase):
             operating_wind_turbine_number_trainable_last_run = None
 
         # Start or continue fitting
-        if whether_start_or_continue_fitting:
+        if ga_max_num_iteration is not None:
             wf_pc_obj.fit(
-                ga_algorithm_param={'max_num_iteration': 200, 'max_iteration_without_improv': 10000},
+                ga_algorithm_param={'max_num_iteration': ga_max_num_iteration,
+                                    'max_iteration_without_improv': 10000,
+                                    'population_size': 1000},
                 params_init_scheme=params_init_scheme,
-                run_n_times=300,
+                run_n_times=10000000,
                 save_to_file_path=fitting_path,
-                focal_error=0,
+                focal_error=0.0025,
                 operating_regime=operating_regime,
                 operating_regime_sure=operating_regime_sure,
                 operating_wind_turbine_number_trainable_last_run=operating_wind_turbine_number_trainable_last_run,
@@ -1188,10 +1190,12 @@ class WF(WTandWFBase):
             tt = 1
             debug_var = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
             debug_var.update_params(*current_best)
-            print(debug_var)
+            print(wf_pc_obj.__str__())
 
             ax = debug_var.plot()
             ax = self.plot(ax=ax)
+            series(np.array(list(map(lambda x: x['function'], load_pkl_file(fitting_path)))),
+                   title='GA Fitting Convergence')
 
     def plot(self, *,
              ax=None,

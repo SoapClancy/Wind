@@ -529,7 +529,8 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(ta
                     continue
 
 
-def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task: str):
+def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task: str, *,
+                                                                                 ga_max_num_iteration=None):
     assert task in ('time series check', '2D plot check', 'fit')
 
     # Make sure the global variable DARLY_WIND_FARM_RAW will not be changed accidentally,
@@ -545,11 +546,11 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines
     results = darly_wind_farm_single.operating_regime_detector_initial_guess()
     # %% Try to find the operating regime
     if task == 'fit':
-        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results)
+        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results,
+                                                         ga_max_num_iteration=ga_max_num_iteration)
     # %% Check results
     else:
-        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results,
-                                                         whether_start_or_continue_fitting=False)
+        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results)
         if task == '2D plot check':
             pass
         else:
@@ -568,7 +569,7 @@ if __name__ == '__main__':
     # fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='2D plot check')
 
     # %% WF-level PC model study (WITHOUT known wind turbines)
-    fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='2D plot check')
+    fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit', ga_max_num_iteration=1600)
 
     # %% Test or debug codes, please ignore:
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')

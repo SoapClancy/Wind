@@ -736,9 +736,9 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
             [
                 ('a', [1 - float_eps, 1 + float_eps]),
                 ('d', [-float_eps, float_eps]),
-                ('b_1', [-15., -10.]),
+                ('b_1', [-15., -7.5]),
                 ('c_1', [11., 14.]),
-                ('g_1', [0.19, 0.3]),
+                ('g_1', [0.15, 0.5]),
                 ('b_2', [0., 60.]),
                 ('c_2', [20., 28.]),
                 ('g_2', [float_eps, 1.]),
@@ -806,10 +806,9 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         # %% Assign weights for attention
         attention_weights = np.full_like(wind_speed_reconstructed, fill_value=np.nan)
         bins = np.histogram(wind_speed_reconstructed,
-                            bins=np.arange(0, np.max(wind_speed_reconstructed) + 5, 1))[1]
+                            bins=np.arange(0, np.max(wind_speed_reconstructed) + 5, 0.5))[1]
         for i in range(len(bins) - 1):
-            this_bin_mask = np.bitwise_and(wind_speed_reconstructed >= bins[i],
-                                           wind_speed_reconstructed < bins[i + 1])
+            this_bin_mask = np.bitwise_and(wind_speed_reconstructed >= bins[i], wind_speed_reconstructed < bins[i + 1])
             this_bin_number = np.sum(this_bin_mask)
             if this_bin_number == 0:
                 continue
@@ -826,13 +825,15 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                                          operating_wind_turbine_number_sure[sure_mask]))
             model_output *= (scale_fact / self.total_wind_turbine_number)
             # focal loss
-            error = (model_output - target_reconstructed) * attention_weights
+            error = model_output - target_reconstructed
             if focal_error is not None:
                 focal_index = np.abs(error) > focal_error
                 if np.sum(focal_index) == 0:
                     focal_index = np.full(error.shape, True)
             else:
                 focal_index = np.full(error.shape, True)
+            # attention weights, importance
+            error *= attention_weights
             return float(np.sqrt(np.mean(error[focal_index] ** 2)))
 
         return func
@@ -843,7 +844,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         :param operating_regime:
         :return:
         """
-        guess_file_path = save_to_file_path.parent / (save_to_file_path.stem + 'S1_guess.pkl')
+        guess_file_path = save_to_file_path.parent / (save_to_file_path.stem + '_S1_guess.pkl')
         guess_params = load_pkl_file(guess_file_path)
         # Fit S1
         if guess_params is None:
@@ -857,10 +858,12 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
             guess_fully_mob_pc = PowerCurveByMethodOfBins(wind_speed, power_output,
                                                           rated_active_power_output=1,
                                                           cal_region_boundary=True)
-            guess_fully_5p_pc.fit(params_init_scheme='average',
+            guess_fully_5p_pc.fit(run_n_times=30,
+                                  params_init_scheme='average',
                                   wind_speed=np.arange(0, guess_fully_mob_pc.region_34_boundary + 0.1, 0.1),
                                   save_to_file_path=guess_file_path)
-            guess_params=guess_fully_5p_pc.params
+            print(f"_S1_guess obtained as 👉 {guess_fully_5p_pc}")
+            guess_params = guess_fully_5p_pc.params
         else:
             guess_params = guess_params[-1]['variable']
         # For part "2", still using average constraints guess
@@ -950,9 +953,22 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         ga_model_run_results = []
         for _ in tqdm(range(run_n_times)):
             ga_model.run(init_solo=initialised_params)
-            ga_model_run_results.append(ga_model.output_dict)
-            initialised_params = ga_model.best_variable  # This will initialise the next GA using the current best
-            save_pkl_file(save_to_file_path, ga_model_run_results)
+            print(ga_model.__str__())
+            # %% For clustering computation
+            this_run_loss = ga_model.output_dict['function']
+            existing_results = load_pkl_file(save_to_file_path)[-1]
+            if existing_results is None:
+                ga_model_run_results.append(ga_model.output_dict)
+                initialised_params = ga_model.best_variable  # This will initialise the next GA using the current best
+                save_pkl_file(save_to_file_path, ga_model_run_results)
+            else:
+                # Keep the cloud version
+                if existing_results['function'] <= this_run_loss:
+                    initialised_params = existing_results['variable']
+                else:
+                    ga_model_run_results.append(ga_model.output_dict)
+                    initialised_params = ga_model.best_variable
+                    save_pkl_file(save_to_file_path, ga_model_run_results)
         # %% Update 8PL PC
         for this_param_index, this_param in enumerate(self.ordered_params):
             source_code = f"self.{this_param} = ga_model.best_variable[{this_param_index}]"  # The last is the best
