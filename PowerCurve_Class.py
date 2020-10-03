@@ -456,8 +456,7 @@ class PowerCurveByMethodOfBins(PowerCurve):
     def corresponding_mob_obj(self):
         return MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                             bin_step=self.bin_width,
-                            first_bin_left_boundary=0,
-                            last_bin_left_boundary=29.5)
+                            first_bin_left_boundary=0)
 
     def __call__(self, ws: Union[IntFloatConstructedOneDimensionNdarray, ndarray]) -> ndarray:
         ws = IntFloatConstructedOneDimensionNdarray(ws)
@@ -507,10 +506,10 @@ class PowerCurveFittedBy8PLF(PowerCurveByMethodOfBins):
                 ('a', [1 - float_eps, 1 + float_eps]),
                 ('d', [-float_eps, float_eps]),
                 ('b_1', [-20., -0.]),
-                ('c_1', [5., 20.]),
+                ('c_1', [10., 20.]),
                 ('g_1', [float_eps, 1.]),
                 ('b_2', [0., 60.]),
-                ('c_2', [15., 30.]),
+                ('c_2', [20., 30.]),
                 ('g_2', [float_eps, 1.]),
             ]
         )
@@ -739,7 +738,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 ('b_1', [-15., -7.5]),
                 ('c_1', [11., 14.]),
                 ('g_1', [0.15, 0.5]),
-                ('b_2', [0., 60.]),
+                ('b_2', [0., 100.]),
                 ('c_2', [20., 28.]),
                 ('g_2', [float_eps, 1.]),
             ]
@@ -768,8 +767,8 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         power_output = np.array(power_output)
         return power_output
 
-    def _dynamic_params_and_trainable_mask_and_index(self, *, operating_regime: DataCategoryData = None,
-                                                     operating_regime_sure: DataCategoryData = None):
+    def dynamic_params_and_trainable_mask_and_index(self, *, operating_regime: DataCategoryData = None,
+                                                    operating_regime_sure: DataCategoryData = None):
         """
         This function can merge self.params and (dynamically) trainable params by looking at operating_regime and
         actual recordings, operating_regime, and operating_regime_sure
@@ -908,7 +907,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         operating_wind_turbine_number_sure = operating_regime_sure_ndarray[:, 0]
 
         # %% Dynamic add params for fitting purpose
-        dynamic_params, trainable_mask, trainable_index = self._dynamic_params_and_trainable_mask_and_index(
+        dynamic_params, trainable_mask, trainable_index = self.dynamic_params_and_trainable_mask_and_index(
             operating_regime=operating_regime,
             operating_regime_sure=operating_regime_sure
         )
@@ -956,12 +955,13 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
             print(ga_model.__str__())
             # %% For clustering computation
             this_run_loss = ga_model.output_dict['function']
-            existing_results = load_pkl_file(save_to_file_path)[-1]
+            existing_results = load_pkl_file(save_to_file_path)
             if existing_results is None:
                 ga_model_run_results.append(ga_model.output_dict)
                 initialised_params = ga_model.best_variable  # This will initialise the next GA using the current best
                 save_pkl_file(save_to_file_path, ga_model_run_results)
             else:
+                existing_results = existing_results[-1]
                 # Keep the cloud version
                 if existing_results['function'] <= this_run_loss:
                     initialised_params = existing_results['variable']

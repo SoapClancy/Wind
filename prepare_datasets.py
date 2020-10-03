@@ -17,15 +17,17 @@ from File_Management.path_and_file_management_Func import try_to_find_file
 from PowerCurve_Class import PowerCurveFittedBy8PLF
 from typing import Tuple
 from collections import OrderedDict
+import getpass
 
-Croatia_RAW_DATA_PATH = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
+Croatia_RAW_DATA_PATH = Path(r"C:\Users\\" + getpass.getuser() + r"\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 
 
 def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
     wind_farm = OrderedDict()
     # WF rated power mapper
     wf_rated_power_mapper = {
-        'Zelengrad': 42
+        'Zelengrad': 42,
+        'Vratarusa': 42
     }
 
     for dir_name, subdir_list, file_list in os.walk(Croatia_RAW_DATA_PATH):

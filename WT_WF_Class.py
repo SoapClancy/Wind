@@ -37,6 +37,9 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from ConvenientDataType import UncertaintyDataFrame, StrOneDimensionNdarray
 from tqdm import tqdm
 from parse import parse
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
@@ -90,6 +93,7 @@ class WTandWFBase(PhysicalInstanceDataFrame):
         if plot_scatter_pc:
             ax = PowerCurveByMethodOfBins(self['wind speed'].values,
                                           self['active power output'].values / self.rated_active_power_output).plot(
+                ws=np.arange(0, 50, 0.5),
                 ax=ax,
                 plot_recording=False,
                 **dict(ChainMap(kwargs, WS_POUT_2D_PLOT_KWARGS))
@@ -167,7 +171,13 @@ class WT(WTandWFBase):
         outlier.abbreviation[cat_ii_outlier_mask] = "CAT-II"
         del cat_ii_outlier_mask
         # %% CAT-III
-        cat_iii_outlier_mask = self.data_category_is_linearity('60T', constant_error={'wind speed': 0.01})
+        # cat_iii_outlier_mask = self.data_category_is_linearity('60T', constant_error={'wind speed': 0.01})
+        cat_iii_outlier_mask = self.data_category_is_linearity(
+            '60T',
+            general_linearity_error={'wind speed': 0.001,
+                                     'active power output': self.rated_active_power_output * 0.0005}
+        )
+
         outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
         del cat_iii_outlier_mask
         # %% CAT-IV
@@ -281,7 +291,7 @@ class WT(WTandWFBase):
                        'DataCategoryData obj': outlier})
         return outlier
 
-    def outlier_plot(self, outlier: DataCategoryData = None, ax=None, *, plot_individual: bool = False):
+    def outlier_plot(self, outlier: DataCategoryData = None, ax=None, *, plot_individual: bool = False, **kwargs):
         outlier = outlier or load_pkl_file(self.default_results_saving_path["outlier"])['DataCategoryData obj']
         self["active power output"] /= self.rated_active_power_output
 
@@ -311,7 +321,7 @@ class WT(WTandWFBase):
                          color="red", marker="4", s=24, **WS_POUT_2D_PLOT_KWARGS)
         ax = scatter(*self[outlier("others")][["wind speed", "active power output"]].values.T, label="Others",
                      ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                     color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS)
+                     color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS, **kwargs)
         self["active power output"] *= self.rated_active_power_output
 
         return ax
@@ -1134,9 +1144,11 @@ class WF(WTandWFBase):
         save_pkl_file(save_file_path, results)
         return results
 
-    def operating_regime_detector(self, *, save_file_path: Path = None,
-                                  initial_guess_results: dict = None,
-                                  ga_max_num_iteration: int = None) -> DataCategoryData:
+    def operating_regime_detector(
+            self, *, save_file_path: Path = None,
+            initial_guess_results: dict = None,
+            ga_max_num_iteration: int = None
+    ) -> Tuple[EquivalentWindFarmPowerCurve, DataCategoryData]:
         if save_file_path is None:
             save_file_path = self.default_results_saving_path["operating regime single senor classification"]
         if try_to_find_file(save_file_path):
@@ -1162,10 +1174,10 @@ class WF(WTandWFBase):
         fitting_path = self.default_results_saving_path["fully operating regime power curve single senor"]  # type:Path
         current_best = None
         if try_to_find_file(fitting_path):
-            current_best = load_pkl_file(fitting_path)[-1]['variable'][:8]
-            wf_pc_obj.update_params(*current_best)  # The last the best
+            current_best = load_pkl_file(fitting_path)[-1]['variable']
+            wf_pc_obj.update_params(*current_best[:8])  # The last the best
             params_init_scheme = 'self'
-            operating_wind_turbine_number_trainable_last_run = load_pkl_file(fitting_path)[-1]['variable'][8:]
+            operating_wind_turbine_number_trainable_last_run = current_best[8:]
         else:
             params_init_scheme = 'guess'
             operating_wind_turbine_number_trainable_last_run = None
@@ -1187,15 +1199,27 @@ class WF(WTandWFBase):
             )
         # If no fitting needed, then update to be a perfect (e.g., already trained) power curve
         else:
-            tt = 1
-            debug_var = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
-            debug_var.update_params(*current_best)
-            print(wf_pc_obj.__str__())
+            # debug_var = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
+            # debug_var.update_params(*current_best)
+            # print(wf_pc_obj.__str__())
+            #
+            # ax = debug_var.plot()
+            # # ax = self.plot(ax=ax)
+            # series(np.array(list(map(lambda x: x['function'], load_pkl_file(fitting_path)))),
+            #        title='GA Fitting Convergence')
 
-            ax = debug_var.plot()
-            ax = self.plot(ax=ax)
-            series(np.array(list(map(lambda x: x['function'], load_pkl_file(fitting_path)))),
-                   title='GA Fitting Convergence')
+            # %% Update the operating regime, indicated by trainable_mask
+            dynamic_params, trainable_mask, trainable_index = wf_pc_obj.dynamic_params_and_trainable_mask_and_index(
+                operating_regime=operating_regime,
+                operating_regime_sure=operating_regime_sure
+            )
+            # Correct the values that exceed the physical limits
+            estimated_normal_number = current_best[8:]
+            upper_limits = 1.0125 * self.rated_active_power_output * current_best[8:] / self.number_of_wind_turbine
+            to_be_correct_mask = self.loc[trainable_mask, 'active power output'].values > upper_limits
+            estimated_normal_number[to_be_correct_mask] = estimated_normal_number[to_be_correct_mask] + 1
+            operating_regime.abbreviation[trainable_mask] = [f"({int(x)}, 0, {self.number_of_wind_turbine - int(x)})"
+                                                             for x in estimated_normal_number]
 
     def plot(self, *,
              ax=None,
@@ -1206,16 +1230,51 @@ class WF(WTandWFBase):
         if operating_regime is None:
             ax = super(WF, self).plot(ax=ax, plot_mfr=plot_mfr, **kwargs)
         else:
-            for this_operating_regime in np.unique(operating_regime.abbreviation):
+            # Analyse the unique abbreviation
+            unique_abbreviation = np.unique(operating_regime.abbreviation)
+            unique_abbreviation = unique_abbreviation[unique_abbreviation != 'others']
+            unique_abbreviation_sort = sorted(unique_abbreviation, key=lambda x: int(parse(r"S{}", x)[0]))
+            unique_abbreviation_sort = np.append(unique_abbreviation_sort, 'others')
+            # Prepare assigned colors
+            cmap_name = 'jet'  # or 'copper'
+            custom_cm = plt.cm.get_cmap(cmap_name, unique_abbreviation_sort.__len__())
+            color_list = custom_cm(range(unique_abbreviation_sort.__len__()))[np.newaxis, :, :3]
+            for i, this_operating_regime in enumerate(unique_abbreviation_sort):
                 if this_operating_regime in ('S1', 'others'):
-                    continue
+                    ax = super(WF, self[operating_regime('S1')]).plot(ax=ax if not plot_individual else None,
+                                                                      plot_mfr=plot_mfr, zorder=-1,
+                                                                      color=tuple(color_list[:, 0, :].squeeze()),
+                                                                      **kwargs)
                 this_operating_regime_mask = operating_regime(this_operating_regime)
                 ax = scatter(self[this_operating_regime_mask]['wind speed'],
                              self[this_operating_regime_mask]['active power output'] / self.rated_active_power_output,
                              ax=ax if not plot_individual else None,
+                             color=tuple(color_list[:, i, :].squeeze()),
                              **kwargs)
-            ax = super(WF, self[operating_regime('S1')]).plot(ax=ax if not plot_individual else None,
-                                                              plot_mfr=plot_mfr, zorder=-1, **kwargs)
+
+            # Color bar codes
+            norm = mpl.colors.Normalize(vmin=0, vmax=1)
+            sm = plt.cm.ScalarMappable(cmap=plt.get_cmap(cmap_name, unique_abbreviation_sort.__len__()), norm=norm)
+            sm.set_array([])
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("top", size="5%", pad=0.05)
+            cbar = plt.colorbar(sm, cax=cax, ax=ax, ticks=(), orientation='horizontal')
+            for j, lab in enumerate(unique_abbreviation_sort):
+                if lab == 'others':
+                    lab = 'Others'
+                else:
+                    lab = operating_regime.name_mapper.infer_from_abbreviation(lab)['long name'].values[0]
+                cbar.ax.text((2 * j + 1) / (unique_abbreviation_sort.__len__() * 2), 3, lab, ha='center', va='center',
+                             fontsize=10, rotation=45)
+            """
+            top=0.89,
+            bottom=0.125,
+            left=0.11,
+            right=0.995,
+            hspace=0.2,
+            wspace=0.2
+            """
+
         return ax
 
 
