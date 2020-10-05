@@ -46,7 +46,7 @@ BIN_WIDTH = 1.
 DARLY_WIND_FARM_RAW_MOB_PC = PowerCurveByMethodOfBins(
     DARLY_WIND_FARM_RAW['wind speed'].values,
     DARLY_WIND_FARM_RAW['active power output'].values / DARLY_WIND_FARM_RAW.rated_active_power_output,
-    bin_width=1
+    bin_width=BIN_WIDTH
 )
 
 # %% Zelengrad WF
@@ -62,11 +62,17 @@ ZELENGRAD_WIND_FARM = ZELENGRAD_WIND_FARM[np.bitwise_and(
     ZELENGRAD_WIND_FARM.index >= datetime.datetime(year=2015, month=1, day=1),
     ZELENGRAD_WIND_FARM.index < datetime.datetime(year=2019, month=1, day=1)
 )]
-
+ZELENGRAD_WIND_FARM_RAW_MOB_PC = PowerCurveByMethodOfBins(
+    ZELENGRAD_WIND_FARM['wind speed'].values,
+    ZELENGRAD_WIND_FARM['active power output'].values / ZELENGRAD_WIND_FARM.rated_active_power_output,
+    bin_width=BIN_WIDTH
+)
 
 # %% Vratarusa WF
-# VRATARUSA_WIND_FARM = load_croatia_data('Vratarusa')['Vratarusa']  # type: WF
-# VRATARUSA_WIND_FARM.number_of_wind_turbine = 14
+VRATARUSA_WIND_FARM = load_croatia_data('Vratarusa')['Vratarusa']  # type: WF
+VRATARUSA_WIND_FARM.number_of_wind_turbine = 14
+
+
 # VRATARUSA_WIND_FARM.resample(
 #     '10T',
 #     resampler_obj_func_source_code="agg(lambda x: np.mean(x.values))"
@@ -400,204 +406,30 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(ta
         # fully_operating_8_param_pc.plot(plot_recording=True)
 
         # %% Fully operating to partly operating linear scaling plus bias analysis
-        darly_wind_farm_equivalent_power_curve_model = \
-            EquivalentWindFarmPowerCurve.init_from_power_curve_fitted_by_8plf_obj(fully_operating_8_param_pc,
-                                                                                  total_wind_turbine_number=6)
+        darly_wind_farm_equivalent_power_curve_model = EquivalentWindFarmPowerCurve.init_from_8p_pc_obj(
+            fully_operating_8_param_pc,
+            total_wind_turbine_number=6,
+            wind_speed_recording=darly_wind_farm['wind speed'].values,
+            active_power_output_recording=darly_wind_farm['active power output'].values,
+            index=darly_wind_farm.index
+        )
+
         if task == '2D plot check':
-            # %% Define a function to obtain the corresponding PowerCurveByMethodOfBins obj
-            def obtain_corresponding_power_curve_by_method_of_bins_obj(index_in_darly_wind_farm: ndarray):
-                _this_operating_regime_mob_pc = PowerCurveByMethodOfBins(
-                    *darly_wind_farm.loc[index_in_darly_wind_farm, ['wind speed', 'active power output']].values.T,
-                    bin_width=BIN_WIDTH,
-                )
-                ws_inner = np.array(
-                    [x['this_bin_boundary'][1]
-                     for x in _this_operating_regime_mob_pc.corresponding_mob_obj.mob.values()
-                     if not x['this_bin_is_empty']]
-                )
-                power_output_inner = np.array(
-                    [np.mean(x['dependent_var_in_this_bin'])
-                     for x in _this_operating_regime_mob_pc.corresponding_mob_obj.mob.values()
-                     if not x['this_bin_is_empty']]
-                )
-                return _this_operating_regime_mob_pc, ws_inner, power_output_inner
-
-            ax = None
-            error_df = pd.DataFrame(
-                columns=pd.MultiIndex.from_product(
-                    [['Mfr PC 0.97', 'Mfr PC 1.27', 'Raw', 'My model'], ['RMSE', 'MAE', 'MAPE']],
-                    names=['Model used', 'error']
-                ),
-                index=[x for x in operating_regime.name_mapper['abbreviation'] if x != 'others']
+            darly_wind_farm_equivalent_power_curve_model.assess_fit_2d_scatters(
+                operating_regime=operating_regime,
+                total_curtailment_amount=darly_wind_farm_total_curtailment_amount,
+                original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
             )
-            for i, (this_operating_regime_long_name, this_operating_regime_abbreviation) in enumerate(zip(
-                    operating_regime.name_mapper['long name'],
-                    operating_regime.name_mapper['abbreviation']
-            )):
-                if this_operating_regime_abbreviation == 'others':
-                    continue
-                parse_obj = parse("({}, {}, {})", this_operating_regime_long_name)
-                operating_wind_turbine_number = int(parse_obj[0])
-                curtailed_wind_turbine_number = int(parse_obj[1])
-                actual_recording = []
-                output_dict = {x: [] for x in error_df.columns.get_level_values('Model used').unique()}
 
-                # %% Define a function to obtain power outputs for error analysis and also for plot
-                def obtain_power_output_for_error_and_plot(total_curtailment_amount_inner):
-                    power_output_inner = darly_wind_farm_equivalent_power_curve_model(
-                        ws,
-                        operating_wind_turbine_number=IntOneDimensionNdarray([operating_wind_turbine_number]),
-                        total_curtailment_amount=total_curtailment_amount_inner
-                    )
-                    power_output_plot_inner = darly_wind_farm_equivalent_power_curve_model(
-                        ws_plot,
-                        operating_wind_turbine_number=IntOneDimensionNdarray([operating_wind_turbine_number]),
-                        total_curtailment_amount=total_curtailment_amount_inner
-                    )
-                    output_dict['My model'].extend(power_output_inner)
-                    output_dict['Mfr PC 0.97'].extend(MFR_PC_LIMIT[0](ws))
-                    output_dict['Mfr PC 1.27'].extend(MFR_PC_LIMIT[-1](ws))
-                    output_dict['Raw'].extend(DARLY_WIND_FARM_RAW_MOB_PC(ws))
-                    actual_recording.extend(bin_pout)
-                    return power_output_plot_inner
-
-                # If there are any WT curtailment, note that the amount of curtailment is uncertain can be be any value!
-                # So, the pain here is to do the more detailed check again, for all unique curtailment,
-                # despite that the curtailed_wind_turbine_number is the same!
-                if curtailed_wind_turbine_number > 0:
-                    curtailment_in_this_operating_regime = darly_wind_farm_total_curtailment_amount[
-                        operating_regime(this_operating_regime_abbreviation)
-                    ]
-                    # round to 4 decimal places to reduce noise effects
-                    curtailment_in_this_operating_regime_round = curtailment_in_this_operating_regime.round(4)
-                    # Do a for-loop for considering all different curtailment amount separately
-                    for _, curtailment in enumerate(np.unique(curtailment_in_this_operating_regime_round)):
-                        index = curtailment_in_this_operating_regime_round[
-                            curtailment == curtailment_in_this_operating_regime_round].index
-                        this_operating_regime_mob_pc, ws, bin_pout = \
-                            obtain_corresponding_power_curve_by_method_of_bins_obj(index)
-                        ws_plot = np.arange(np.min(ws), np.max(ws) + 0.01, 0.01)
-                        # Wind speed ndarray obj for calculation error
-                        power_output_plot = obtain_power_output_for_error_and_plot(curtailment)
-
-                        if (this_operating_regime_long_name == '(5, 1, 0)') and (_ == 0):
-                            label = 'LS 6P-PC\nplus CTL'
-                            label_2 = 'Regime PC'
-                        else:
-                            label = None
-                            label_2 = None
-                        ax = series(ws_plot, power_output_plot, ax=ax, color='red', linestyle='-', label=label)
-                        ax = series(ws, bin_pout, ax=ax, color='black', linestyle='--', label=label_2)
-
-                # Much easy and straight forward if there are no WT curtailment
-                else:
-                    this_operating_regime_mob_pc, ws, bin_pout = obtain_corresponding_power_curve_by_method_of_bins_obj(
-                        operating_regime(this_operating_regime_abbreviation)
-                    )
-                    total_curtailment_amount = 0
-                    ws_plot = np.arange(0, 30, 0.01)
-                    # Wind speed ndarray obj for calculation error
-                    power_output_plot = obtain_power_output_for_error_and_plot(total_curtailment_amount)
-
-                    if this_operating_regime_abbreviation == 'S1':
-                        ax = fully_operating_8_param_pc.plot(ws=ws_plot, ax=ax, plot_recording=False, color='blue',
-                                                             linestyle='-', label='6P-PC')
-                    else:
-                        label = 'LS 6P-PC' if this_operating_regime_long_name == '(5, 0, 1)' else None
-                        ax = series(ws_plot, power_output_plot, ax=ax, color='green', linestyle='-', label=label)
-                    ax = series(ws, bin_pout, ax=ax, color='black', linestyle='--')
-
-                # %% Calculate error
-                for key in error_df.columns.get_level_values('Model used').unique():
-                    error_obj = DeterministicError(target=np.array(actual_recording).flatten(),
-                                                   model_output=np.array(output_dict[key]).flatten())
-                    error_df.loc[this_operating_regime_abbreviation,
-                                 (key, 'RMSE')] = error_obj.cal_root_mean_square_error()
-                    error_df.loc[this_operating_regime_abbreviation,
-                                 (key, 'MAE')] = error_obj.cal_mean_absolute_error()
-                    error_df.loc[this_operating_regime_abbreviation,
-                                 (key, 'MAPE')] = error_obj.cal_mean_absolute_percentage_error()
-            ax = scatter(*darly_wind_farm.loc[~operating_regime('others'), ['wind speed',
-                                                                            'active power output']].values.T,
-                         ax=ax, color='silver', alpha=0.75, zorder=-1, label="Filtered data")
-            # Adjust the order of the legend
-            ax = adjust_legend_order_in_ax(ax, new_order_of_labels=('Filtered data',
-                                                                    'Regime PC',
-                                                                    '6P-PC',
-                                                                    'LS 6P-PC',
-                                                                    'LS 6P-PC\nplus CTL'))
-
-            error_df.to_csv(fitting_file_path.parent / 'errors.csv')
-            # Compare different models
-            for this_error in error_df.columns.get_level_values('error').unique():
-                ax_error = series(error_df.index, error_df[('Mfr PC 0.97', this_error)].values,
-                                  label=MFR_PC_LIMIT[0].label, figure_size=(5, 5 * (0.618 ** 2)),
-                                  marker='^', markersize=6, x_label='WF Operating Regime', y_label=f'{this_error}')
-                ax_error = series(error_df.index, error_df[('Raw', this_error)].values, label='Raw', color='fuchsia',
-                                  marker='*', markersize=8, ax=ax_error, legend_loc='upper center',
-                                  legend_ncol=4, x_label='WF Operating Regime', y_label=f'{this_error}')
-                ax_error = series(error_df.index, error_df[('Mfr PC 1.27', this_error)].values,
-                                  label=MFR_PC_LIMIT[-1].label,
-                                  marker='v', markersize=6, ax=ax_error, legend_loc='upper center',
-                                  legend_ncol=4, x_label='WF Operating Regime', y_label=f'{this_error}')
-                ax_error = series(error_df.index, error_df[('My model', this_error)].values, label='Model',
-                                  ax=ax_error, marker='.', markersize=8, x_ticks_rotation=45, color='green',
-                                  y_lim=(-0.04, 0.91 if this_error == 'MAE' else 1.11), legend_loc='upper left',
-                                  legend_ncol=2)
-            # Focus on the performance of the proposed equivalent model, for the purpose of hypothesis proof
-            x_ticks = operating_regime.name_mapper.convert_sequence_data_key(
-                'abbreviation', 'long name',
-                sequence_data=error_df.index.values
-            )
-            ax_error = series(x_ticks, error_df[('My model', 'RMSE')].values, color='green',
-                              label='RMSE', figure_size=(5, 5 * (0.618 ** 1.6)), marker='s', markersize=4)
-            ax_error = series(x_ticks, error_df[('My model', 'MAE')].values, ax=ax_error,
-                              y_lim=(-0.002, 0.042),
-                              marker='.', markersize=8, label='MAE',
-                              x_label=r'WF Operating Regime [($\it{a}$, $\it{b}$, $\it{c}$)]', x_ticks_rotation=45,
-                              y_label='Error [p.u.]')
-
-            # ax_error = series(error_df.index, error_df[('My model', 'RMSE')].values, color='fuchsia',
-            #                   label='RMSE', figure_size=(5, 5 * (0.618 ** 2)), marker='s', markersize=4)
-            # ax_error = series(error_df.index, error_df[('My model', 'MAE')].values, ax=ax_error,
-            #                   marker='*', markersize=6, label='MAE',
-            #                   x_label='WF Operating Regime', x_ticks_rotation=45, y_label='RMSE or MAE [p.u.]')
-            # ax_error_2 = ax_error.twinx()
-            # ax_error_2.set_ylabel('MAPE [%]', fontsize=10)
-            # ax_error_2.plot(error_df.index, error_df[('My model', 'MAPE')].values,
-            #                 marker='.', markersize=6, linestyle='-', color='green', label='MAPE')
-            # ax_error.set_ylim((0, 0.06))
-            # ax_error_2.set_ylim((0, 13))
-            # plt.legend(labels=['RMSE', 'MAE', 'MAPE'], loc='upper left', ncol=3, prop={'size': 10})
-
-            return ax_error
         else:
-            tt = 1
-            mfr_pc_pout_est = MFR_PC_LIMIT[1](darly_wind_farm['wind speed'].values)
-            scatters_pc_pout_est = DARLY_WIND_FARM_RAW_MOB_PC(darly_wind_farm['wind speed'].values)
-            operating_wind_turbine_number = [int(parse("({}, {}, {})", x)[0])
-                                             for x in operating_regime.name_mapper.convert_sequence_data_key(
-                    'abbreviation', 'long name', sequence_data=operating_regime.abbreviation
-                )]
-            my_model_pout_est = darly_wind_farm_equivalent_power_curve_model(
-                darly_wind_farm['wind speed'].values,
-                operating_wind_turbine_number=operating_wind_turbine_number,
-                total_curtailment_amount=darly_wind_farm_total_curtailment_amount.values
+            darly_wind_farm_equivalent_power_curve_model.assess_fit_time_series(
+                operating_regime=operating_regime,
+                total_curtailment_amount=darly_wind_farm_total_curtailment_amount.values,
+                original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
             )
-            pout_actual = darly_wind_farm['active power output'].values
-            # Visualisation
-            ax = series(pout_actual, label='Recorded')
-            ax = series(my_model_pout_est, label='My model', ax=ax)
-            # Error calculation
-            for this_model_est in ('mfr_pc_pout_est', 'scatters_pc_pout_est', 'my_model_pout_est'):
-                error_obj = DeterministicError(target=pout_actual,
-                                               model_output=globals()[this_model_est])
-                print(this_model_est + "\n" + f"RMSE={error_obj.cal_root_mean_square_error()} p.u.,\n"
-                                              f"MAE={error_obj.cal_mean_absolute_error()} p.u.\n\n")
 
 
-def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task: str, *,
-                                                                                 ga_max_num_iteration=None):
+def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task: str):
     assert task in ('time series check', '2D plot check', 'fit')
 
     # Make sure the global variable DARLY_WIND_FARM_RAW will not be changed accidentally,
@@ -610,20 +442,96 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines
     # Set CAT-III outliers to be nan
     darly_wind_farm_single[outlier(('CAT-III', 'missing'))] = np.nan
 
-    results = darly_wind_farm_single.operating_regime_detector_initial_guess()
+    # results = darly_wind_farm_single.operating_regime_detector_initial_guess()
     # %% Try to find the operating regime
     if task == 'fit':
-        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results,
-                                                         ga_max_num_iteration=ga_max_num_iteration)
+        darly_wind_farm_single.operating_regime_detector('fit')
     # %% Check results
     else:
-        darly_wind_farm_single.operating_regime_detector(initial_guess_results=results)
+        wf_pc_obj, operating_regime = darly_wind_farm_single.operating_regime_detector('load')
+        wf_pc_obj.bin_width = BIN_WIDTH
         if task == '2D plot check':
-            pass
+            darly_wind_farm_single.plot(operating_regime=operating_regime, not_show_color_bar=True)
+            wf_pc_obj.assess_fit_2d_scatters(
+                operating_regime=operating_regime,
+                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
+                original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
+            )
         else:
-            pass
+            wf_pc_obj.assess_fit_time_series(
+                operating_regime=operating_regime,
+                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
+                original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
+            )
 
 
+def fit_or_analyse_zelengrad_wind_farm_power_curve_model(task: str):
+    assert task in ('time series check', '2D plot check', 'fit')
+
+    # Make sure the global variable DARLY_WIND_FARM_RAW will not be changed accidentally,
+    # Also, change the obj_name attribute, since they are now treated as single-sensor measurements
+    zelengrad_wind_farm = copy.deepcopy(ZELENGRAD_WIND_FARM)
+    zelengrad_wind_farm.obj_name = 'Zelengrad single'
+    zelengrad_wind_farm['active power output'] /= zelengrad_wind_farm.rated_active_power_output
+    zelengrad_wind_farm.rated_active_power_output = 1
+
+    # %% Do the outlier analyse
+    outlier = zelengrad_wind_farm.outlier_detector(
+        '6T',
+        constant_error={'wind speed': 0.001},
+        extra_boundary_rules=[
+            {'wind speed': (0, 2), 'active power output': (0.02, 1)},
+            {'wind speed': (3.064, 3.065), 'active power output': (0.0075, 1)},
+            {'wind speed': (6.1, 6.2), 'active power output': (0.28, 1)},
+            {'wind speed': (5.0, 5.1), 'active power output': (0.375, 1)},
+            {'wind speed': (10.3, 10.4), 'active power output': (0.001, 0.04)}
+        ]
+    )
+    # Set CAT-III outliers to be nan
+    zelengrad_wind_farm[outlier(('CAT-III', 'missing'))] = np.nan
+
+    # results = darly_wind_farm_single.operating_regime_detector_initial_guess()
+    # %% Try to find the operating regime
+    if task == 'fit':
+        zelengrad_wind_farm.operating_regime_detector('fit')
+    else:
+        wf_pc_obj, operating_regime = zelengrad_wind_farm.operating_regime_detector('load')
+        wf_pc_obj.bin_width = BIN_WIDTH
+        if task == '2D plot check':
+            zelengrad_wind_farm.plot(operating_regime=operating_regime, not_show_color_bar=False)
+            wf_pc_obj.assess_fit_2d_scatters(
+                operating_regime=operating_regime,
+                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
+                original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC
+            )
+        else:
+            wf_pc_obj.assess_fit_time_series(
+                operating_regime=operating_regime,
+                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
+                original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC
+            )
+
+
+def fit_or_analyse_vratarusa_wind_farm_power_curve_model(task: str):
+    assert task in ('time series check', '2D plot check', 'fit')
+
+    # Make sure the global variable DARLY_WIND_FARM_RAW will not be changed accidentally,
+    # Also, change the obj_name attribute, since they are now treated as single-sensor measurements
+    vratarusa_wind_farm = copy.deepcopy(VRATARUSA_WIND_FARM)
+    vratarusa_wind_farm.obj_name = 'Vratarusa single'
+
+    # %% Do the outlier analyse
+    outlier = vratarusa_wind_farm.outlier_detector('60T', constant_error={'wind speed': 0.01})
+    # Set CAT-III outliers to be nan
+    vratarusa_wind_farm[outlier(('CAT-III', 'missing'))] = np.nan
+
+    # results = darly_wind_farm_single.operating_regime_detector_initial_guess()
+    # %% Try to find the operating regime
+    if task == 'fit':
+        vratarusa_wind_farm.operating_regime_detector('fit')
+
+
+# VRATARUSA_WIND_FARM
 if __name__ == '__main__':
     # %% Data exploratory
     # plot_raw_data_for_outlier_demo()
@@ -636,12 +544,16 @@ if __name__ == '__main__':
     # darly_wind_farm_operating_regime()
 
     # %% WF-level PC model study (with known wind turbines)
-    # _ax = fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='time series check')
+    # fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='time series check')
 
     # %% WF-level PC model study (WITHOUT known wind turbines)
-    # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit',
-    #                                                                              ga_max_num_iteration=1600)
-    fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='2D plot check')
+    # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit')
+    # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='time series check')
+    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')
+    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
+    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
+
+    # fit_or_analyse_vratarusa_wind_farm_power_curve_model(task='fit')
 
     # %% Test or debug codes, please ignore:
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')

@@ -1,37 +1,26 @@
 from __future__ import annotations
-from BivariateAnalysis_Class import MethodOfBins
 from abc import ABCMeta, abstractmethod
-from functools import wraps
-from numpy import ndarray
 from scipy.interpolate import interp1d
-import numpy as np
-from typing import Union, Tuple, Iterator, Iterable, Callable, Sequence
+from typing import Tuple, Callable
 from Ploting.fast_plot_Func import *
-from scipy.io import loadmat
 import pandas as pd
 from Data_Preprocessing import float_eps
 import warnings
-from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, UncertaintyDataFrame, StrOneDimensionNdarray, \
-    OneDimensionNdarray, IntOneDimensionNdarray
+from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, UncertaintyDataFrame, IntOneDimensionNdarray
 from typing import Iterable
-from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
-from numba import jit, vectorize, float32, guvectorize, int32, boolean, int8
-import tensorflow as tf
-import numba as nb
+from numba import float32, guvectorize, boolean
 import copy
-import time
 from collections import OrderedDict, ChainMap
 from geneticalgorithm import geneticalgorithm as ga
-import itertools
-from inspect import Parameter, Signature
-import inspect
-from pathlib import Path
+from inspect import Signature
 from File_Management.load_save_Func import save_pkl_file, load_pkl_file
 from project_utils import *
-import re
-from Filtering.OutlierAnalyser_Class import DataCategoryNameMapper, DataCategoryData
-from parse import parse
+from Filtering.OutlierAnalyser_Class import DataCategoryData, DataCategoryNameMapper
 from tqdm import tqdm
+from PhysicalInstance_Class import PhysicalInstanceDataFrame
+from parse import parse
+from ErrorEvaluation_Class import DeterministicError
+from Ploting.adjust_Func import *
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -57,9 +46,12 @@ class PowerCurve(metaclass=ABCMeta):
         # 不是非单调增或非单调减函数而导致误差
         region_12_boundary = region_12_boundary_est[np.where(
             (self(region_12_boundary_est) - tolerance) > 0)[0][0]]
-        region_23_boundary = region_23_boundary_est[np.where(
-            (self(region_23_boundary_est) - (
-                    self.rated_active_power_output - tolerance)) > 0)[0][0]]
+        try:
+            region_23_boundary = region_23_boundary_est[np.where(
+                (self(region_23_boundary_est) - (
+                        self.rated_active_power_output - tolerance)) > 0)[0][0]]
+        except IndexError:
+            region_23_boundary = region_23_boundary_est[np.argmax(self(region_23_boundary_est))]
         try:
             region_34_boundary = region_34_boundary_est[np.where(
                 (self(region_34_boundary_est) - (
@@ -101,7 +93,7 @@ class PowerCurve(metaclass=ABCMeta):
     def plot(self, ws: ndarray = None, plot_region_boundary: bool = False, ax=None,
              mode='continuous', **kwargs):
         ax = self.__plot_region_boundary(ax) if plot_region_boundary else ax
-        ws = ws if ws is not None else np.arange(0, 29.5, 0.01)
+        ws = ws if ws is not None else np.arange(float_eps, 40.5, 0.01)
         active_power_output = self(ws)
         kwargs = dict(ChainMap(kwargs,
                                {'linestyle': self.linestyle,
@@ -142,13 +134,16 @@ class PowerCurveByMfr(PowerCurve):
         self.mfr_ws = np.concatenate(([-np.inf],
                                       [cut_in_ws or mfr_pc_metadata.index.values[0] - float_eps * 2],
                                       mfr_pc_metadata.index.values,
-                                      [25 + float_eps * 10],
+                                      [(25 if air_density != 'special' else 100) + float_eps * 10],
                                       [np.inf]))
-        self.mfr_p = np.concatenate(([0],
-                                     [0],
-                                     mfr_pc_metadata[air_density].values,
-                                     [0],
-                                     [0])) / self.rated_active_power_output
+        self.mfr_ws[self.mfr_ws == 0] = float_eps
+        self.mfr_p = np.concatenate(
+            ([float_eps],
+             [float_eps],
+             mfr_pc_metadata[air_density if air_density != 'special' else '1.12'].values,
+             [float_eps if air_density != 'special' else self.rated_active_power_output],
+             [float_eps if air_density != 'special' else self.rated_active_power_output])
+        ) / self.rated_active_power_output
         self.air_density = air_density
         # self.label = 'Mfr PC\n(' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$' + ')'
         # self.label = 'Mfr PC (' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$)'
@@ -190,6 +185,7 @@ class PowerCurveByMfr(PowerCurve):
 
     def __call__(self, ws: Union[Iterable, float, int]):
         ws = IntFloatConstructedOneDimensionNdarray(ws)
+        ws[ws == 0] = float_eps
         return interp1d(self.mfr_ws, self.mfr_p)(ws)
 
     def cal_with_hysteresis_control_using_high_resol_wind(
@@ -441,28 +437,30 @@ class PowerCurveByMethodOfBins(PowerCurve):
         """
         利用线性插值得到高精度(bin=0.05m/s)的power curve的查找表
         """
-        core_ws = np.arange(0, 30, 0.05)
+        core_ws = np.arange(float_eps, 30, 0.05)
         power_curve_look_up_table_hi_resol = np.full((core_ws.size, 2), np.nan)
         power_curve_look_up_table_hi_resol[:, 0] = core_ws
         del core_ws
         power_curve_look_up_table = self.corresponding_mob_obj.cal_mob_statistic_eg_quantile()
         power_curve_look_up_table_hi_resol[:, 1] = interp1d(
             np.concatenate((np.array([-100]), power_curve_look_up_table[:, 0], np.array([100]))),
-            np.concatenate((np.array([0]), power_curve_look_up_table[:, 1], np.array([0]))))(
+            np.concatenate((np.array([float_eps]), power_curve_look_up_table[:, 1], np.array([float_eps]))))(
             power_curve_look_up_table_hi_resol[:, 0])
         return power_curve_look_up_table_hi_resol
 
     @property
     def corresponding_mob_obj(self):
+        from BivariateAnalysis_Class import MethodOfBins
         return MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
                             bin_step=self.bin_width,
                             first_bin_left_boundary=0)
 
     def __call__(self, ws: Union[IntFloatConstructedOneDimensionNdarray, ndarray]) -> ndarray:
         ws = IntFloatConstructedOneDimensionNdarray(ws)
+        ws[ws == 0] = float_eps
         non_nan_mask = ~np.bitwise_or(*np.isnan(self.power_curve_look_up_table).T)
         return interp1d(np.concatenate(([-100], self.power_curve_look_up_table[non_nan_mask, 0], [100])),
-                        np.concatenate(([0], self.power_curve_look_up_table[non_nan_mask, 1], [0])))(ws)
+                        np.concatenate(([float_eps], self.power_curve_look_up_table[non_nan_mask, 1], [float_eps])))(ws)
 
     def plot(self,
              ws: ndarray = None,
@@ -726,9 +724,9 @@ class PowerCurveFittedBy5PLF(PowerCurveFittedBy8PLF):
 
 
 class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
-    __slots__ = ("total_wind_turbine_number",)
+    __slots__ = ("total_wind_turbine_number", "index")
 
-    def __init__(self, *args, total_wind_turbine_number: int, **kwargs):
+    def __init__(self, *args, total_wind_turbine_number: int, index=None, **kwargs):
         super().__init__(*args, interp_for_high_resol=False, **kwargs)
         # To make life easy, the constraints are set using Mfr PC fitting experience
         constraints = dict(
@@ -736,22 +734,25 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 ('a', [1 - float_eps, 1 + float_eps]),
                 ('d', [-float_eps, float_eps]),
                 ('b_1', [-15., -7.5]),
-                ('c_1', [11., 14.]),
-                ('g_1', [0.15, 0.5]),
-                ('b_2', [0., 100.]),
-                ('c_2', [20., 28.]),
-                ('g_2', [float_eps, 1.]),
+                ('c_1', [10., 15.]),
+                ('g_1', [float_eps, 0.6]),
+                ('b_2', [0., 120.]),
+                ('c_2', [20., 30.]),
+                ('g_2', [float_eps, 2.]),
             ]
         )
         constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])
         self._params_constraints = constraints  # type: OrderedDict
         self.total_wind_turbine_number = total_wind_turbine_number
+        self.index = index
 
     @classmethod
-    def init_from_power_curve_fitted_by_8plf_obj(cls, power_curve_fitted_by_8plf_obj: PowerCurveFittedBy8PLF,
-                                                 *, total_wind_turbine_number: int) -> EquivalentWindFarmPowerCurve:
+    def init_from_8p_pc_obj(cls, power_curve_fitted_by_8plf_obj: PowerCurveFittedBy8PLF,
+                            *, total_wind_turbine_number: int,
+                            **kwargs) -> EquivalentWindFarmPowerCurve:
         return cls(**power_curve_fitted_by_8plf_obj.params_ordered_dict,
-                   total_wind_turbine_number=total_wind_turbine_number)
+                   total_wind_turbine_number=total_wind_turbine_number,
+                   bin_width=power_curve_fitted_by_8plf_obj.bin_width, **kwargs)
 
     def __call__(self, ws: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int, float], *,
                  operating_wind_turbine_number: Union[IntOneDimensionNdarray, Sequence, int] = None,
@@ -767,47 +768,309 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         power_output = np.array(power_output)
         return power_output
 
-    def dynamic_params_and_trainable_mask_and_index(self, *, operating_regime: DataCategoryData = None,
-                                                    operating_regime_sure: DataCategoryData = None):
-        """
-        This function can merge self.params and (dynamically) trainable params by looking at operating_regime and
-        actual recordings, operating_regime, and operating_regime_sure
-        :return: a tuple,
-        element 0 is constructed dynamic parameters
-        element 1 is mask of trainable
-        element 2 is index of trainable
+    def assess_fit_2d_scatters(self, *,
+                               ax=None,
+                               operating_regime: DataCategoryData,
+                               total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int],
+                               original_scatters_pc: PowerCurve):
+        assert ((self.wind_speed_recording is not None) and (self.active_power_output_recording is not None))
 
-        """
-        # %% Determine the required number of integer parameters
-        # Firstly, need to look at the NaN situation in self.wind_speed_recording and active_power_output_recording to
-        # initially determine how many parameters required
-        both_good_mask = np.bitwise_and(~np.isnan(self.wind_speed_recording),
-                                        ~np.isnan(self.active_power_output_recording))
-        # Double check
-        assert np.array_equal(both_good_mask, ~(operating_regime.abbreviation == 'nan')), "Wrong 'operating_regime'"
+        # %% Define a function to obtain the corresponding PowerCurveByMethodOfBins obj
+        def obtain_corresponding_power_curve_by_method_of_bins_obj(index_in_wind_farm_eq_obj: ndarray):
+            _this_operating_regime_mob_pc = PowerCurveByMethodOfBins(
+                *self.wind_farm_eq_obj.loc[index_in_wind_farm_eq_obj].values.T,
+                bin_width=self.bin_width,
+            )
+            ws_inner = np.array(
+                [x['this_bin_boundary'][1]
+                 for x in _this_operating_regime_mob_pc.corresponding_mob_obj.mob.values()
+                 if not x['this_bin_is_empty']]
+            )
+            power_output_inner = np.array(
+                [np.mean(x['dependent_var_in_this_bin'])
+                 for x in _this_operating_regime_mob_pc.corresponding_mob_obj.mob.values()
+                 if not x['this_bin_is_empty']]
+            )
+            return _this_operating_regime_mob_pc, ws_inner, power_output_inner
 
-        # Secondly, since operating_regime_sure have solid confidence, their corresponding recordings are not trainable
-        trainable_mask = np.bitwise_and(both_good_mask, operating_regime_sure.abbreviation == 'nan')
-        trainable_index = operating_regime.index[trainable_mask]
+        error_df = pd.DataFrame(
+            columns=pd.MultiIndex.from_product(
+                [['Raw', 'My model'], ['RMSE', 'MAE']],
+                names=['Model used', 'error']
+            ),
+            index=[x for x in operating_regime.name_mapper['abbreviation'] if x != 'others']
+        )
+        ls_pc_label_existing_flag = False
+        ls_pc_plus_clt_label_existing_flag = False
+        regime_pc_existing_flag = False
+        for i, (this_operating_regime_long_name, this_operating_regime_abbreviation) in enumerate(zip(
+                operating_regime.name_mapper['long name'],
+                operating_regime.name_mapper['abbreviation']
+        )):
+            if this_operating_regime_abbreviation == 'others':
+                continue
+            parse_obj = parse("({}, {}, {})", this_operating_regime_long_name)
+            operating_wind_turbine_number = int(parse_obj[0])
+            curtailed_wind_turbine_number = int(parse_obj[1])
+            actual_recording = []
+            output_dict = {x: [] for x in error_df.columns.get_level_values('Model used').unique()}
 
-        # Thirdly, concatenate with self.params
-        dynamic_params = np.concatenate((self.params, np.full(np.sum(trainable_mask), fill_value=np.nan)))
-        return dynamic_params, trainable_mask, trainable_index
+            # %% Define a function to obtain power outputs for error analysis and also for plot
+            def obtain_power_output_for_error_and_plot(this_total_curtailment_amount):
+                power_output_inner = self(
+                    ws,
+                    operating_wind_turbine_number=IntOneDimensionNdarray([operating_wind_turbine_number]),
+                    total_curtailment_amount=this_total_curtailment_amount
+                )
+                power_output_plot_inner = self(
+                    ws_plot,
+                    operating_wind_turbine_number=IntOneDimensionNdarray([operating_wind_turbine_number]),
+                    total_curtailment_amount=this_total_curtailment_amount
+                )
+                output_dict['My model'].extend(power_output_inner)
+                output_dict['Raw'].extend(original_scatters_pc(ws))
+                actual_recording.extend(bin_pout)
+                return power_output_plot_inner
+
+            # If there are any WT curtailment, note that the amount of curtailment is uncertain can be be any value!
+            # So, the pain here is to do the more detailed check again, for all unique curtailment,
+            # despite that the curtailed_wind_turbine_number is the same!
+            if curtailed_wind_turbine_number > 0:
+                curtailment_in_this_operating_regime = total_curtailment_amount[
+                    operating_regime(this_operating_regime_abbreviation)
+                ]
+                # round to 4 decimal places to reduce noise effects
+                curtailment_in_this_operating_regime_round = curtailment_in_this_operating_regime.round(2)
+                # Do a for-loop for considering all different curtailment amount separately
+                for _, curtailment in enumerate(np.unique(curtailment_in_this_operating_regime_round)):
+                    index = curtailment_in_this_operating_regime_round[
+                        curtailment == curtailment_in_this_operating_regime_round].index
+                    this_operating_regime_mob_pc, ws, bin_pout = \
+                        obtain_corresponding_power_curve_by_method_of_bins_obj(index)
+                    ws_plot = np.arange(np.min(ws), np.max(ws) + 0.1, 0.01)
+                    # Wind speed ndarray obj for calculation error
+                    power_output_plot = obtain_power_output_for_error_and_plot(curtailment)
+
+                    if not ls_pc_plus_clt_label_existing_flag:
+                        label = 'LS 6P-PC\nplus CTL'
+                        ls_pc_plus_clt_label_existing_flag = True
+                    else:
+                        label = None
+                    ax = series(ws_plot, power_output_plot, ax=ax, color='red', linestyle='-', label=label)
+                    ax = series(ws, bin_pout, ax=ax, color='black', linestyle='--')
+
+            # Much easy and straight forward if there are no WT curtailment
+            else:
+                this_operating_regime_mob_pc, ws, bin_pout = obtain_corresponding_power_curve_by_method_of_bins_obj(
+                    operating_regime(this_operating_regime_abbreviation)
+                )
+                ws_plot = np.arange(0, 50, 0.1)
+                # Wind speed ndarray obj for calculation error
+                power_output_plot = obtain_power_output_for_error_and_plot(0)
+
+                if this_operating_regime_abbreviation == 'S1':
+                    ax = self.corresponding_8p_pc_obj.plot(
+                        ws=ws_plot, ax=ax, plot_recording=False, color='blue', linestyle='-', label='6P-PC'
+                    )
+                else:
+                    label = 'LS 6P-PC' if not ls_pc_label_existing_flag else None
+                    ls_pc_label_existing_flag = True
+                    ax = series(ws_plot, power_output_plot, ax=ax, color='green', linestyle='-', label=label)
+
+                if not regime_pc_existing_flag:
+                    label_2 = 'Regime PC'
+                    regime_pc_existing_flag = True
+                else:
+                    label_2 = None
+                ax = series(ws, bin_pout, ax=ax, color='black', linestyle='--', label=label_2)
+
+            # %% Calculate error
+            for key in error_df.columns.get_level_values('Model used').unique():
+                error_obj = DeterministicError(target=np.array(actual_recording).flatten(),
+                                               model_output=np.array(output_dict[key]).flatten())
+                error_df.loc[this_operating_regime_abbreviation,
+                             (key, 'RMSE')] = error_obj.cal_root_mean_square_error()
+                error_df.loc[this_operating_regime_abbreviation,
+                             (key, 'MAE')] = error_obj.cal_mean_absolute_error()
+        ax = scatter(*self.wind_farm_eq_obj.loc[~operating_regime('others'), ['wind speed',
+                                                                              'active power output']].values.T,
+                     ax=ax, color='silver', alpha=0.75, zorder=-1, label="Filtered data")
+        # Adjust the order of the legend
+        new_order_of_labels = ['Filtered data', 'Regime PC', '6P-PC', 'LS 6P-PC']
+        if ls_pc_plus_clt_label_existing_flag:
+            new_order_of_labels.append('LS 6P-PC\nplus CTL')
+
+        ax = adjust_legend_order_in_ax(ax, new_order_of_labels=new_order_of_labels)
+
+        # error_df.to_csv(fitting_file_path.parent / 'errors.csv')
+        x_ticks = operating_regime.name_mapper.convert_sequence_data_key(
+            'abbreviation', 'long name',
+            sequence_data=error_df.index.values
+        )
+        ax_error = series(x_ticks, error_df[('My model', 'RMSE')].values, color='green',
+                          label='RMSE', figure_size=(5, 5 * (0.618 ** 1.6)), marker='s', markersize=4)
+        ax_error = series(x_ticks, error_df[('My model', 'MAE')].values, ax=ax_error,
+                          y_lim=(-0.002, 0.042),
+                          marker='.', markersize=8, label='MAE',
+                          x_label=r'WF Operating Regime [($\it{a}$, $\it{b}$, $\it{c}$)]', x_ticks_rotation=45,
+                          y_label='Error [p.u.]')
+
+    def assess_fit_time_series(self, *,
+                               operating_regime: DataCategoryData,
+                               total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int],
+                               original_scatters_pc: PowerCurve):
+        assert ((self.wind_speed_recording is not None) and (self.active_power_output_recording is not None))
+
+        mfr_pc_pout_est = PowerCurveByMfr('1.12')(self.wind_farm_eq_obj['wind speed'].values)
+        scatters_pc_pout_est = original_scatters_pc(self.wind_farm_eq_obj['wind speed'].values)
+        operating_wind_turbine_number = [int(parse("({}, {}, {})", x)[0])
+                                         for x in operating_regime.name_mapper.convert_sequence_data_key(
+                'abbreviation', 'long name', sequence_data=operating_regime.abbreviation
+            )]
+        my_model_pout_est = self(
+            self.wind_farm_eq_obj['wind speed'].values,
+            operating_wind_turbine_number=operating_wind_turbine_number,
+            total_curtailment_amount=total_curtailment_amount
+        )
+        pout_actual = self.wind_farm_eq_obj['active power output'].values
+
+        # Error calculation
+        for this_model_est in ('mfr_pc_pout_est', 'scatters_pc_pout_est', 'my_model_pout_est'):
+            error_obj = DeterministicError(target=pout_actual,
+                                           model_output=eval(this_model_est))
+            print(this_model_est + "\n" + f"RMSE={error_obj.cal_root_mean_square_error()} p.u.,\n"
+                                          f"MAE={error_obj.cal_mean_absolute_error()} p.u.\n\n")
+
+    @property
+    def wind_farm_eq_obj(self):
+        _wind_farm_eq_obj = PhysicalInstanceDataFrame(data={'wind speed': self.wind_speed_recording,
+                                                            'active power output': self.active_power_output_recording},
+                                                      index=self.index,
+                                                      dependant_names=('active power output',),
+                                                      obj_name='wind_farm_eq_obj',
+                                                      predictor_names=('wind speed',))
+        return _wind_farm_eq_obj
+
+    @property
+    def corresponding_8p_pc_obj(self) -> PowerCurveFittedBy8PLF:
+        pc_obj = PowerCurveFittedBy8PLF(interp_for_high_resol=False, bin_width=self.bin_width)
+        pc_obj.update_params(*self.params)
+        return pc_obj
+
+    def mle_initialisation(self):
+        # Candidates
+        possible_normally_operating_wind_turbine = range(0, 1 + self.total_wind_turbine_number)
+        expected_rated_power_output_in_operating_regime = pd.Series(
+            index=possible_normally_operating_wind_turbine,
+            data=np.array(possible_normally_operating_wind_turbine) / self.total_wind_turbine_number
+        )
+
+        # %% To find the flat power output in the Pout-WS 2D scatter plot
+        flat_power_output_mask = self.wind_farm_eq_obj.data_category_is_linearity(
+            '30T',
+            constant_error={'active power output': 0.00001}
+        )
+
+        # %% Find the cases when there is any WT curtailment
+        abs_flat_diff = np.abs(self.active_power_output_recording[flat_power_output_mask] -
+                               expected_rated_power_output_in_operating_regime.values[:, np.newaxis])
+        abs_flat_diff = np.min(abs_flat_diff, axis=0)
+        curtailment_happen_index = self.wind_farm_eq_obj.index[flat_power_output_mask][
+            abs_flat_diff > (0.02 / self.total_wind_turbine_number)]
+        curtailment_happen_mask = np.isin(self.index, curtailment_happen_index)
+        total_pout_when_curtail = np.full_like(self.active_power_output_recording, fill_value=0.)
+        total_pout_when_curtail[curtailment_happen_mask] = self.active_power_output_recording[curtailment_happen_mask]
+        del flat_power_output_mask, abs_flat_diff
+        return (possible_normally_operating_wind_turbine,
+                expected_rated_power_output_in_operating_regime,
+                pd.Series(total_pout_when_curtail, index=self.index),
+                curtailment_happen_mask)
+
+    def maximum_likelihood_estimation_for_wind_farm_operation_regime(self, power_output_func: Callable = None, *,
+                                                                     initialisation=None,
+                                                                     return_fancy: bool = False):
+        power_output_func = power_output_func or super(EquivalentWindFarmPowerCurve, self).__call__
+        initialisation = initialisation or self.mle_initialisation()
+        possible_normally_operating_wind_turbine = initialisation[0]
+        expected_rated_power_output_in_operating_regime = initialisation[1]
+        total_pout_when_curtail_values = initialisation[2].values
+        curtailment_happen_mask = initialisation[3]
+
+        # %% Find the closest normally operating WTs if no WT curtailment
+        power_output = power_output_func(self.wind_speed_recording)
+        power_output_scaled = np.tile(power_output, (possible_normally_operating_wind_turbine.__len__(), 1))
+        power_output_scaled *= expected_rated_power_output_in_operating_regime.values[:, np.newaxis]
+        abs_diff = np.abs(self.active_power_output_recording - power_output_scaled)
+        normally_operating_number = np.argmin(abs_diff, axis=0)
+        del power_output, power_output_scaled, abs_diff
+
+        # %% Reassign normally operating WTs when there is curtailment
+        # diff = (total_pout_when_curtail_values[curtailment_happen_mask] -
+        #         expected_rated_power_output_in_operating_regime.values[:, np.newaxis] * power_output_func(
+        #             self.wind_speed_recording[curtailment_happen_mask]))
+        diff = (total_pout_when_curtail_values[curtailment_happen_mask] -
+                expected_rated_power_output_in_operating_regime.values[:, np.newaxis])
+        revise = []
+        for i in range(diff.shape[1]):
+            revise.append(np.argwhere(diff[:, i] > 0)[-1, 0])
+        normally_operating_number[curtailment_happen_mask] = revise
+
+        # %% Make correction that exceeding limit
+        limits = normally_operating_number / self.total_wind_turbine_number
+        above_limits_mask = self.active_power_output_recording > (limits * 1.0125)
+        normally_operating_number[np.bitwise_and(above_limits_mask, ~curtailment_happen_mask)] += 1
+        del limits
+
+        # %% Summary
+        curtailment_number = copy.deepcopy(total_pout_when_curtail_values)
+        curtailment_number[curtailment_number != 0] = 1
+        curtailment_number = curtailment_number.astype(int)
+        shutdown_or_nan_number = self.total_wind_turbine_number - curtailment_number - normally_operating_number
+
+        fancy = None
+        if return_fancy:
+            long_name_array = np.array([f"({a}, {b}, {c})" for a, b, c in zip(normally_operating_number,
+                                                                              curtailment_number,
+                                                                              shutdown_or_nan_number)])
+            abbreviation_array_unique_sorted = np.array(
+                sorted(np.unique(long_name_array),
+                       key=lambda x: (int(parse(r"({}, {}, {})", x)[0]),
+                                      int(parse(r"({}, {}, {})", x)[1]),
+                                      int(parse(r"({}, {}, {})", x)[2])),
+                       reverse=True)
+            )
+            name_mapper = DataCategoryNameMapper(data={
+                'long name': abbreviation_array_unique_sorted,
+                'abbreviation': [f"S{i}" for i in range(1, abbreviation_array_unique_sorted.__len__() + 1)],
+                'code': [-1] * abbreviation_array_unique_sorted.__len__(),
+                'description': abbreviation_array_unique_sorted
+            })
+            fancy = DataCategoryData(
+                abbreviation=name_mapper.convert_sequence_data_key('long name', 'abbreviation',
+                                                                   sequence_data=long_name_array),
+                index=self.wind_farm_eq_obj.index,
+                name_mapper=name_mapper
+            )
+
+        summary = dict((('normally_operating_number', normally_operating_number),
+                        ('curtailment_number', curtailment_number),
+                        ('shutdown_or_nan_number', shutdown_or_nan_number)))
+        do_not_cal_error_mask = np.bitwise_or(above_limits_mask, curtailment_happen_mask)
+
+        total_curtail_amount = copy.deepcopy(total_pout_when_curtail_values)
+        total_curtail_amount[curtailment_happen_mask] = (total_curtail_amount - normally_operating_number /
+                                                         self.total_wind_turbine_number)[curtailment_happen_mask]
+        return summary, pd.Series(total_curtail_amount, index=initialisation[2].index), do_not_cal_error_mask, fancy
 
     def _loss_func(self, wind_speed, *,
                    target,
-                   trainable_mask=None,
-                   operating_wind_turbine_number_sure=None,
                    focal_error=None) -> Callable:
-        sure_mask = ~np.isnan(operating_wind_turbine_number_sure)
-        # %% Reconstruct the wind speed, where the first part is trainable, while the rest is already be sure about
-        wind_speed_reconstructed = np.concatenate((wind_speed[trainable_mask], wind_speed[sure_mask]))
         # %% Assign weights for attention
-        attention_weights = np.full_like(wind_speed_reconstructed, fill_value=np.nan)
-        bins = np.histogram(wind_speed_reconstructed,
-                            bins=np.arange(0, np.max(wind_speed_reconstructed) + 5, 0.5))[1]
+        attention_weights = np.full_like(wind_speed, fill_value=np.nan)
+        bins = np.histogram(wind_speed,
+                            bins=np.arange(0, np.nanmax(wind_speed) + 5, 0.5))[1]
         for i in range(len(bins) - 1):
-            this_bin_mask = np.bitwise_and(wind_speed_reconstructed >= bins[i], wind_speed_reconstructed < bins[i + 1])
+            this_bin_mask = np.bitwise_and(wind_speed >= bins[i], wind_speed < bins[i + 1])
             this_bin_number = np.sum(this_bin_mask)
             if this_bin_number == 0:
                 continue
@@ -815,16 +1078,15 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 attention_weights[this_bin_mask] = 1 / this_bin_number
         attention_weights /= (np.sum(attention_weights) / len(attention_weights))
         assert ~(np.isnan(attention_weights).any())
-        # The similar reconstruction applied to target (i.e., power output)
-        target_reconstructed = np.concatenate((target[trainable_mask], target[sure_mask]))
+        initialisation = self.mle_initialisation()
 
         def func(params_array):
-            model_output = self.call_static_func()(wind_speed_reconstructed, *(params_array[:self.params.__len__()]))
-            scale_fact = np.concatenate((params_array[self.params.__len__():],
-                                         operating_wind_turbine_number_sure[sure_mask]))
+            model_output = self.call_static_func()(wind_speed, *(params_array[:self.params.__len__()]))
+            mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(initialisation=initialisation)
+            scale_fact = mle[0]['normally_operating_number']
             model_output *= (scale_fact / self.total_wind_turbine_number)
             # focal loss
-            error = model_output - target_reconstructed
+            error = model_output - target
             if focal_error is not None:
                 focal_index = np.abs(error) > focal_error
                 if np.sum(focal_index) == 0:
@@ -833,23 +1095,23 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 focal_index = np.full(error.shape, True)
             # attention weights, importance
             error *= attention_weights
-            return float(np.sqrt(np.mean(error[focal_index] ** 2)))
+            return float(np.sqrt(np.mean(error[np.bitwise_and(focal_index, ~mle[-2])] ** 2)))
 
         return func
 
-    def _params_init(self, operating_regime: DataCategoryData = None, save_to_file_path: Path = None):
+    def _params_init(self, save_to_file_path: Path = None):
         """
         This is to initialise the params using guessed fully operating regime
-        :param operating_regime:
         :return:
         """
+        mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(PowerCurveByMfr('special').__call__)
         guess_file_path = save_to_file_path.parent / (save_to_file_path.stem + '_S1_guess.pkl')
         guess_params = load_pkl_file(guess_file_path)
         # Fit S1
         if guess_params is None:
-            _ = operating_regime(f'({self.total_wind_turbine_number}, 0, 0)')
-            wind_speed = self.wind_speed_recording[_]
-            power_output = self.active_power_output_recording[_]
+            fully_mask = mle[0]['normally_operating_number'] == self.total_wind_turbine_number
+            wind_speed = self.wind_speed_recording[fully_mask]
+            power_output = self.active_power_output_recording[fully_mask]
             # Initialise a PowerCurveFittedBy5PLF obj for fitting
             guess_fully_5p_pc = PowerCurveFittedBy5PLF(wind_speed, power_output)
             guess_fully_5p_pc.params_constraints = {key: self.params_constraints[key] for key in ('b_1', 'c_1', 'g_1')}
@@ -857,7 +1119,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
             guess_fully_mob_pc = PowerCurveByMethodOfBins(wind_speed, power_output,
                                                           rated_active_power_output=1,
                                                           cal_region_boundary=True)
-            guess_fully_5p_pc.fit(run_n_times=30,
+            guess_fully_5p_pc.fit(run_n_times=50,
                                   params_init_scheme='average',
                                   wind_speed=np.arange(0, guess_fully_mob_pc.region_34_boundary + 0.1, 0.1),
                                   save_to_file_path=guess_file_path)
@@ -879,71 +1141,35 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
             params_init_scheme: str,
             run_n_times: int = 3,
             save_to_file_path: Path = None,
-            operating_regime: DataCategoryData = None,
-            operating_regime_sure: DataCategoryData = None,
-            operating_wind_turbine_number_trainable_last_run: ndarray = None,
             focal_error: Union[int, float] = 0,
             function_timeout=10, **kwargs):
         wind_speed = IntFloatConstructedOneDimensionNdarray(self.wind_speed_recording)
         target = IntFloatConstructedOneDimensionNdarray(self.active_power_output_recording)
-        assert (len(operating_regime.pd_view) == len(operating_regime_sure.pd_view) == len(wind_speed) == len(target))
         assert (params_init_scheme in ('self', 'guess')), "'params_init_scheme' can either be 'self' or 'guess'"
 
-        # %% Parse useful information in DataCategoryData to ndarray
-        def parse_func(x):
-            if x == 'nan':
-                return np.full(3, fill_value=np.nan)
-            else:
-                parse_obj = parse("({}, {}, {})", x)
-                return np.array([int(y) for y in parse_obj.fixed])
-
-        operating_regime_ndarray = np.array(list(map(parse_func, operating_regime.abbreviation)))
-        operating_regime_sure_ndarray = np.array(list(map(parse_func, operating_regime_sure.abbreviation)))
-
-        # operating_wind_turbine_number is mainly for parameter init
-        operating_wind_turbine_number = operating_regime_ndarray[:, 0]
-        # The only useful information in operating_regime_sure that can be used for guiding the fitting is the
-        # operating_wind_turbine_number_sure
-        operating_wind_turbine_number_sure = operating_regime_sure_ndarray[:, 0]
-
-        # %% Dynamic add params for fitting purpose
-        dynamic_params, trainable_mask, trainable_index = self.dynamic_params_and_trainable_mask_and_index(
-            operating_regime=operating_regime,
-            operating_regime_sure=operating_regime_sure
-        )
         # %% Prepare the parameters of GA algorithm and the initial values for fitting
         ga_algorithm_param = ga_algorithm_param or {}
         if params_init_scheme == 'self':
             if any([this_param is None for this_param in self.params]):
                 raise Exception("To use 'self' in 'params_init_scheme', all params must not be None. "
                                 "Otherwise, please use 'average'")
-            normally_initialised_params = self.params
-            initialised_params = np.concatenate((normally_initialised_params,
-                                                 operating_wind_turbine_number_trainable_last_run))
+            initialised_params = self.params
         else:
-            normally_initialised_params = self._params_init(operating_regime,
-                                                            save_to_file_path)
-            initialised_params = np.concatenate((normally_initialised_params,
-                                                 operating_wind_turbine_number[trainable_mask]))
-        # dynamically initialise the params
+            initialised_params = self._params_init(save_to_file_path)
 
-        # dynamically get the constraints
+        # constraints
         variable_boundaries = np.array(list(self.params_constraints.values()))
-        variable_boundaries = np.concatenate((variable_boundaries,
-                                              np.array([[0, self.total_wind_turbine_number]] * len(trainable_index))))
 
         # dynamical loss func
         loss_func = self._loss_func(wind_speed,
                                     focal_error=focal_error,
-                                    trainable_mask=trainable_mask,
-                                    operating_wind_turbine_number_sure=operating_wind_turbine_number_sure,
                                     target=target)
         # %% Init GA obj
         default_algorithm_param = Signature.from_callable(ga.__init__).parameters['algorithm_parameters'].default
         ga_algorithm_param = dict(ChainMap(ga_algorithm_param, default_algorithm_param))
         ga_model = ga(function=loss_func,
-                      dimension=dynamic_params.__len__(),
-                      variable_type_mixed=np.array([['real']] * len(self.params) + [['int']] * len(trainable_index)),
+                      dimension=self.params.__len__(),
+                      variable_type='real',
                       variable_boundaries=variable_boundaries,
                       function_timeout=function_timeout,
                       algorithm_parameters=ga_algorithm_param)

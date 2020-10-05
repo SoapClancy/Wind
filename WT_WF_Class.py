@@ -916,11 +916,8 @@ class WF(WTandWFBase):
 
             "operating regime": self.results_path / f"OperatingRegime/{self.__str__()}/report.csv",
 
-            "operating regime initial guess": self.results_path / f"OperatingRegime/{self.__str__()}/"
-                                                                  f"operating_regime_initial_guess.pkl",
-
-            "operating regime single senor classification": self.results_path / f"OperatingRegime/{self.__str__()}/"
-                                                                                f"single_sensor_classification.pkl",
+            "operating regime single senor": self.results_path / f"OperatingRegime/{self.__str__()}/"
+                                                                 f"single_sensor_classification.pkl",
 
             "fully operating regime power curve": self.results_path / f"PowerCurve/{self.__str__()}/fully_OPR_8PL.pkl",
 
@@ -1024,6 +1021,7 @@ class WF(WTandWFBase):
 
     def outlier_detector(self, *data_category_is_linearity_args,
                          save_file_path: Path = None,
+                         extra_boundary_rules: Iterable[dict] = None,
                          **data_category_is_linearity_kwargs) -> DataCategoryData:
         save_file_path = save_file_path or self.default_results_saving_path["outlier"]
         if try_to_find_file(save_file_path):
@@ -1037,12 +1035,22 @@ class WF(WTandWFBase):
             data_category_is_linearity_kwargs = {"constant_error": {'wind speed': 0.01}}
         cat_iii_outlier_mask = self.data_category_is_linearity(*data_category_is_linearity_args,
                                                                **data_category_is_linearity_kwargs)
+
+        if extra_boundary_rules is not None:
+            for this_boundary in extra_boundary_rules:
+                cat_iii_outlier_mask = np.bitwise_or(cat_iii_outlier_mask,
+                                                     self.data_category_inside_boundary(this_boundary))
         outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
+
         ################################################################################################################
         # outlier = super(WF, self).outlier_detector()  # type: DataCategoryData
-        # cat_iii_outlier_mask = self.data_category_is_linearity('20T', constant_error={'wind speed': 0.0001})
+        # cat_iii_outlier_mask = self.data_category_is_linearity('6T', constant_error={'wind speed': 0.001})
+        # if extra_boundary_rules is not None:
+        #     for this_boundary in extra_boundary_rules:
+        #         cat_iii_outlier_mask = np.bitwise_or(cat_iii_outlier_mask,
+        #                                              self.data_category_inside_boundary(this_boundary))
         # outlier.abbreviation[cat_iii_outlier_mask] = "CAT-III"
-        # ax = self[outlier('CAT-III')].plot(color='r')
+        # ax = self[outlier('CAT-III')].plot(color='r', zorder = 2)
         # ax = self[outlier('others')].plot(ax=ax)
         # self[outlier('CAT-III')].plot(color='r')
         # self[outlier('others')].plot()
@@ -1055,177 +1063,56 @@ class WF(WTandWFBase):
                        'DataCategoryData obj': outlier})
         return outlier
 
-    def operating_regime_detector_initial_guess(self, *, save_file_path: Path = None) -> dict:
-        save_file_path = save_file_path or self.default_results_saving_path["operating regime initial guess"]
-        if try_to_find_file(save_file_path):
-            warnings.warn(f"{self.__str__()} has results in {save_file_path}")
-            return load_pkl_file(save_file_path)
-        # %% Define a DataCategoryNameMapper obj to store all possible situations.
-        # Also store the expected rated power output in each operating regime if possible (i.e., curtailed == 0)
-        operating_regime_name_mapper = DataCategoryNameMapper.init_from_template()
-        expected_rated_power_output_in_operating_regime = {}
-        for i in range(self.number_of_wind_turbine, -1, -1):
-            operating = i
-            for j in (0, 1):
-                curtailed = j
-                shutdown_or_nan = self.number_of_wind_turbine - operating - curtailed
-                if not all((0 <= operating <= self.number_of_wind_turbine,
-                            0 <= curtailed <= 1,
-                            0 <= shutdown_or_nan <= self.number_of_wind_turbine)):
-                    continue
-                this_row_meta = {"operating": operating, "curtailed": curtailed, "shutdown_or_nan": shutdown_or_nan}
-                # Update operating_regime_name_mapper
-                operating_regime_name_mapper = pd.concat(
-                    (operating_regime_name_mapper,
-                     pd.DataFrame({"long name": f"({operating}, {curtailed}, {shutdown_or_nan})",
-                                   "abbreviation": f"S{len(operating_regime_name_mapper)}",
-                                   "code": -1,
-                                   "description": str(this_row_meta)}, index=[0])),
-                    ignore_index=True
-                )
-                # Update expected_rated_power_output_in_operating_regime
-                if curtailed == 0:
-                    expected_rated_power_output_in_operating_regime.update(
-                        {f"({operating}, {curtailed}, {shutdown_or_nan})": 1 / self.number_of_wind_turbine * operating}
-                    )
-        operating_regime_name_mapper = operating_regime_name_mapper.drop(0).reindex()
-        expected_rated_power_output_in_operating_regime = pd.Series(expected_rated_power_output_in_operating_regime)
-        del i, operating, curtailed, shutdown_or_nan, this_row_meta, j
-
-        # %% Initialise a DataCategoryData obj for storing the classification results
-        operating_regime = DataCategoryData(
-            abbreviation=StrOneDimensionNdarray(['nan'] * self.index.__len__()).astype("U18"),
-            index=self.index,
-            name_mapper=operating_regime_name_mapper
-        )
-        # %% To find the flat power output in the Pout-WS 2D scatter plot
-        flat_power_output_mask = self.data_category_is_linearity(
-            '30T',
-            constant_error={'active power output': self.rated_active_power_output * 0.0005}
-        )
-        # Assign operating regime to actual measurements according to flat_power_output_mask,
-        # operating_regime_name_mapper, and expected_rated_power_output_in_operating_regime
-        for this_index in self.index[flat_power_output_mask]:
-            this_power_output = self.loc[this_index, 'active power output'] / self.rated_active_power_output
-            # Find the closest
-            this_delta = this_power_output - expected_rated_power_output_in_operating_regime  # type: pd.Series
-            this_delta_abs = np.abs(this_delta)  # type: pd.Series
-            this_delta_min, this_delta_min_index = this_delta_abs.min(), this_delta_abs.idxmin()
-            this_index_mask = operating_regime.index == this_index
-            # Can only be sure about very close values
-            if this_delta_min <= 0.01:
-                operating_regime.abbreviation[this_index_mask] = this_delta_min_index
-            else:
-                parse_temp = parse("({}, 0, {})", this_delta[this_delta.values > 0].index[0])
-                operating_temp, shutdown_or_nan = int(parse_temp[0]), int(parse_temp[1])
-                operating_regime.abbreviation[this_index_mask] = f"({operating_temp}, 1, {shutdown_or_nan - 1})"
-        del this_index, this_index_mask, this_delta, this_delta_abs, this_delta_min, this_delta_min_index, \
-            this_power_output, operating_temp, shutdown_or_nan, parse_temp
-        # There are parts of results are sure
-        operating_regime_sure = copy.deepcopy(operating_regime)
-        # %% Fill-missing, by Mfr PC 1.12
-        middle_mfr_pc = PowerCurveByMfr('1.12')
-        for this_index in self.index[~flat_power_output_mask]:
-            this_wind_speed = self.loc[this_index, 'wind speed']
-            this_power_output = self.loc[this_index, 'active power output'] / self.rated_active_power_output
-            if np.isnan(this_wind_speed) or np.isnan(this_power_output):
-                continue
-            # Obtain potential candidates
-            pout_by_middle_mfr_pc_candidates = pd.Series(
-                index=expected_rated_power_output_in_operating_regime.index,
-                data=expected_rated_power_output_in_operating_regime.values * middle_mfr_pc(this_wind_speed)
-            )
-            # Find the closest
-            this_delta_abs = np.abs(this_power_output - pout_by_middle_mfr_pc_candidates)  # type: pd.Series
-            this_delta_min_index = this_delta_abs.idxmin()
-            operating_regime.abbreviation[operating_regime.index == this_index] = this_delta_min_index
-
-        results = {'operating_regime': operating_regime, 'operating_regime_sure': operating_regime_sure}
-        save_pkl_file(save_file_path, results)
-        return results
-
-    def operating_regime_detector(
-            self, *, save_file_path: Path = None,
-            initial_guess_results: dict = None,
-            ga_max_num_iteration: int = None
-    ) -> Tuple[EquivalentWindFarmPowerCurve, DataCategoryData]:
-        if save_file_path is None:
-            save_file_path = self.default_results_saving_path["operating regime single senor classification"]
-        if try_to_find_file(save_file_path):
-            warnings.warn(f"{self.__str__()} has operating regime single senor classification in {save_file_path}")
-            return load_pkl_file(save_file_path)
-
-        # %% Check whether initial_guess_results is available
-        if initial_guess_results is None:
-            initial_guess_results = load_pkl_file(self.default_results_saving_path["operating regime initial guess"])
-            if initial_guess_results is None:
-                raise FileNotFoundError("Should specify 'initial_guess_results' or run instance method"
-                                        "'operating_regime_detector_initial_guess'")
-        operating_regime = initial_guess_results['operating_regime']  # type: DataCategoryData
-        operating_regime_sure = initial_guess_results['operating_regime_sure']  # type: DataCategoryData
+    def operating_regime_detector(self, task: str = 'load') -> Tuple[EquivalentWindFarmPowerCurve, DataCategoryData]:
+        assert (task in ('load', 'fit')), "'Task' is not in ('load', 'fit')"
+        pc_file_path = self.default_results_saving_path["fully operating regime power curve single senor"]
+        operating_regime_file_path = self.default_results_saving_path["operating regime single senor"]
 
         # %% Prepare run the GA for a EquivalentWindFarmPowerCurve obj
+        if task == 'fit':
+            num_mask = np.bitwise_and(~np.isnan(self['wind speed'].values),
+                                      ~np.isnan(self['active power output'].values))
+        else:
+            num_mask = np.full_like(self['wind speed'].values, fill_value=True).astype(bool)
         wf_pc_obj = EquivalentWindFarmPowerCurve(
             total_wind_turbine_number=self.number_of_wind_turbine,
-            wind_speed_recording=self['wind speed'].values,
-            active_power_output_recording=self['active power output'].values / self.rated_active_power_output,
+            wind_speed_recording=self['wind speed'].values[num_mask],
+            active_power_output_recording=self['active power output'].values[num_mask] / self.rated_active_power_output,
+            index=self.index[num_mask]
         )
         # If there are any fitting results in the saving path, then they can be used as initials
-        fitting_path = self.default_results_saving_path["fully operating regime power curve single senor"]  # type:Path
-        current_best = None
-        if try_to_find_file(fitting_path):
-            current_best = load_pkl_file(fitting_path)[-1]['variable']
-            wf_pc_obj.update_params(*current_best[:8])  # The last the best
+        if try_to_find_file(pc_file_path):
+            current_best = load_pkl_file(pc_file_path)[-1]['variable']
+            wf_pc_obj.update_params(*current_best[:wf_pc_obj.params.__len__()])  # The last the best
             params_init_scheme = 'self'
-            operating_wind_turbine_number_trainable_last_run = current_best[8:]
         else:
             params_init_scheme = 'guess'
-            operating_wind_turbine_number_trainable_last_run = None
-
-        # Start or continue fitting
-        if ga_max_num_iteration is not None:
+        if task == 'fit':
             wf_pc_obj.fit(
-                ga_algorithm_param={'max_num_iteration': ga_max_num_iteration,
-                                    'max_iteration_without_improv': 10000,
-                                    'population_size': 1000},
+                ga_algorithm_param={'max_num_iteration': 50,
+                                    'max_iteration_without_improv': 1000000,
+                                    'population_size': 100},
                 params_init_scheme=params_init_scheme,
                 run_n_times=10000000,
-                save_to_file_path=fitting_path,
-                focal_error=0.0025,
-                operating_regime=operating_regime,
-                operating_regime_sure=operating_regime_sure,
-                operating_wind_turbine_number_trainable_last_run=operating_wind_turbine_number_trainable_last_run,
+                save_to_file_path=pc_file_path,
+                focal_error=0.001,
                 function_timeout=6000
             )
-        # If no fitting needed, then update to be a perfect (e.g., already trained) power curve
-        else:
-            # debug_var = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
-            # debug_var.update_params(*current_best)
-            # print(wf_pc_obj.__str__())
-            #
-            # ax = debug_var.plot()
-            # # ax = self.plot(ax=ax)
-            # series(np.array(list(map(lambda x: x['function'], load_pkl_file(fitting_path)))),
-            #        title='GA Fitting Convergence')
 
-            # %% Update the operating regime, indicated by trainable_mask
-            dynamic_params, trainable_mask, trainable_index = wf_pc_obj.dynamic_params_and_trainable_mask_and_index(
-                operating_regime=operating_regime,
-                operating_regime_sure=operating_regime_sure
-            )
-            # Correct the values that exceed the physical limits
-            estimated_normal_number = current_best[8:]
-            upper_limits = 1.0125 * self.rated_active_power_output * current_best[8:] / self.number_of_wind_turbine
-            to_be_correct_mask = self.loc[trainable_mask, 'active power output'].values > upper_limits
-            estimated_normal_number[to_be_correct_mask] = estimated_normal_number[to_be_correct_mask] + 1
-            operating_regime.abbreviation[trainable_mask] = [f"({int(x)}, 0, {self.number_of_wind_turbine - int(x)})"
-                                                             for x in estimated_normal_number]
+        else:
+            print(f"best found = {wf_pc_obj}")
+            operating_regime = wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                return_fancy=True
+            )[-1]
+            save_pkl_file(operating_regime_file_path, operating_regime)
+            return wf_pc_obj, operating_regime
 
     def plot(self, *,
              ax=None,
              plot_mfr: Iterable[PowerCurveByMfr] = None,
              operating_regime: DataCategoryData = None,
              plot_individual: bool = False,
+             not_show_color_bar=False,
              **kwargs):
         if operating_regime is None:
             ax = super(WF, self).plot(ax=ax, plot_mfr=plot_mfr, **kwargs)
@@ -1236,7 +1123,7 @@ class WF(WTandWFBase):
             unique_abbreviation_sort = sorted(unique_abbreviation, key=lambda x: int(parse(r"S{}", x)[0]))
             unique_abbreviation_sort = np.append(unique_abbreviation_sort, 'others')
             # Prepare assigned colors
-            cmap_name = 'jet'  # or 'copper'
+            cmap_name = 'jet'  # 'copper', 'jet', 'cool'
             custom_cm = plt.cm.get_cmap(cmap_name, unique_abbreviation_sort.__len__())
             color_list = custom_cm(range(unique_abbreviation_sort.__len__()))[np.newaxis, :, :3]
             for i, this_operating_regime in enumerate(unique_abbreviation_sort):
@@ -1253,27 +1140,29 @@ class WF(WTandWFBase):
                              **kwargs)
 
             # Color bar codes
-            norm = mpl.colors.Normalize(vmin=0, vmax=1)
-            sm = plt.cm.ScalarMappable(cmap=plt.get_cmap(cmap_name, unique_abbreviation_sort.__len__()), norm=norm)
-            sm.set_array([])
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("top", size="5%", pad=0.05)
-            cbar = plt.colorbar(sm, cax=cax, ax=ax, ticks=(), orientation='horizontal')
-            for j, lab in enumerate(unique_abbreviation_sort):
-                if lab == 'others':
-                    lab = 'Others'
-                else:
-                    lab = operating_regime.name_mapper.infer_from_abbreviation(lab)['long name'].values[0]
-                cbar.ax.text((2 * j + 1) / (unique_abbreviation_sort.__len__() * 2), 3, lab, ha='center', va='center',
-                             fontsize=10, rotation=45)
-            """
-            top=0.89,
-            bottom=0.125,
-            left=0.11,
-            right=0.995,
-            hspace=0.2,
-            wspace=0.2
-            """
+            if not not_show_color_bar:
+                norm = mpl.colors.Normalize(vmin=0, vmax=1)
+                sm = plt.cm.ScalarMappable(cmap=plt.get_cmap(cmap_name, unique_abbreviation_sort.__len__()), norm=norm)
+                sm.set_array([])
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("top", size="5%", pad=0.05)
+                cbar = plt.colorbar(sm, cax=cax, ax=ax, ticks=(), orientation='horizontal')
+                for j, lab in enumerate(unique_abbreviation_sort):
+                    if lab == 'others':
+                        lab = 'Others'
+                    else:
+                        lab = operating_regime.name_mapper.infer_from_abbreviation(lab)['long name'].values[0]
+                    cbar.ax.text((2 * j + 1) / (unique_abbreviation_sort.__len__() * 2), 3, lab, ha='center',
+                                 va='center',
+                                 fontsize=10, rotation=45)
+                """
+                top=0.89,
+                bottom=0.125,
+                left=0.11,
+                right=0.995,
+                hspace=0.2,
+                wspace=0.2
+                """
 
         return ax
 
