@@ -1089,9 +1089,9 @@ class WF(WTandWFBase):
             params_init_scheme = 'guess'
         if task == 'fit':
             wf_pc_obj.fit(
-                ga_algorithm_param={'max_num_iteration': 50,
+                ga_algorithm_param={'max_num_iteration': 10,
                                     'max_iteration_without_improv': 1000000,
-                                    'population_size': 100},
+                                    'population_size': 500},
                 params_init_scheme=params_init_scheme,
                 run_n_times=10000000,
                 save_to_file_path=pc_file_path,
@@ -1102,6 +1102,7 @@ class WF(WTandWFBase):
         else:
             print(f"best found = {wf_pc_obj}")
             operating_regime = wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                task='evaluate',
                 return_fancy=True
             )[-1]
             save_pkl_file(operating_regime_file_path, operating_regime)

@@ -736,9 +736,9 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 ('b_1', [-15., -7.5]),
                 ('c_1', [10., 15.]),
                 ('g_1', [float_eps, 0.6]),
-                ('b_2', [0., 120.]),
+                ('b_2', [0., 100.]),
                 ('c_2', [20., 30.]),
-                ('g_2', [float_eps, 2.]),
+                ('g_2', [float_eps, 2]),
             ]
         )
         constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])
@@ -768,12 +768,19 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         power_output = np.array(power_output)
         return power_output
 
-    def assess_fit_2d_scatters(self, *,
-                               ax=None,
-                               operating_regime: DataCategoryData,
-                               total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int],
-                               original_scatters_pc: PowerCurve):
+    def assess_fit_2d_scatters(
+            self, *,
+            ax=None,
+            operating_regime: DataCategoryData,
+            total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int] = None,
+            original_scatters_pc: PowerCurve
+    ):
         assert ((self.wind_speed_recording is not None) and (self.active_power_output_recording is not None))
+
+        if total_curtailment_amount is None:
+            total_curtailment_amount = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                task='evaluate'
+            )[1]
 
         # %% Define a function to obtain the corresponding PowerCurveByMethodOfBins obj
         def obtain_corresponding_power_curve_by_method_of_bins_obj(index_in_wind_farm_eq_obj: ndarray):
@@ -910,16 +917,22 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         ax_error = series(x_ticks, error_df[('My model', 'RMSE')].values, color='green',
                           label='RMSE', figure_size=(5, 5 * (0.618 ** 1.6)), marker='s', markersize=4)
         ax_error = series(x_ticks, error_df[('My model', 'MAE')].values, ax=ax_error,
-                          y_lim=(-0.002, 0.042),
                           marker='.', markersize=8, label='MAE',
                           x_label=r'WF Operating Regime [($\it{a}$, $\it{b}$, $\it{c}$)]', x_ticks_rotation=45,
                           y_label='Error [p.u.]')
 
-    def assess_fit_time_series(self, *,
-                               operating_regime: DataCategoryData,
-                               total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int],
-                               original_scatters_pc: PowerCurve):
+    def assess_fit_time_series(
+            self, *,
+            operating_regime: DataCategoryData,
+            total_curtailment_amount: Union[IntFloatConstructedOneDimensionNdarray, Sequence, int] = None,
+            original_scatters_pc: PowerCurve
+    ):
         assert ((self.wind_speed_recording is not None) and (self.active_power_output_recording is not None))
+
+        if total_curtailment_amount is None:
+            total_curtailment_amount = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                task='evaluate'
+            )[1].values
 
         mfr_pc_pout_est = PowerCurveByMfr('1.12')(self.wind_farm_eq_obj['wind speed'].values)
         scatters_pc_pout_est = original_scatters_pc(self.wind_farm_eq_obj['wind speed'].values)
@@ -957,7 +970,8 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         pc_obj.update_params(*self.params)
         return pc_obj
 
-    def mle_initialisation(self):
+    def mle_initialisation(self, task: str = 'fit'):
+        assert (task in ('fit', 'evaluate'))
         # Candidates
         possible_normally_operating_wind_turbine = range(0, 1 + self.total_wind_turbine_number)
         expected_rated_power_output_in_operating_regime = pd.Series(
@@ -981,20 +995,37 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         total_pout_when_curtail = np.full_like(self.active_power_output_recording, fill_value=0.)
         total_pout_when_curtail[curtailment_happen_mask] = self.active_power_output_recording[curtailment_happen_mask]
         del flat_power_output_mask, abs_flat_diff
+
+        # %% Using special Mfr PC to ensure the operating regime when WS > WS_cut_out and flat
+        ws_above_limit_mask = self.wind_speed_recording > (PowerCurveByMfr.cut_out_wind_speed * 0.8)
+        diff = (self.active_power_output_recording[ws_above_limit_mask] -
+                expected_rated_power_output_in_operating_regime.values[:, np.newaxis] * 1.0125)
+        temp = []
+        for i in range(diff.shape[1]):
+            temp.append(np.argwhere(diff[:, i] < 0)[0, 0])
+        ws_above_limit_regime = np.full(ws_above_limit_mask.shape, fill_value=np.nan)
+        ws_above_limit_regime[ws_above_limit_mask] = temp
+        if task == 'evaluate':
+            ws_above_limit_regime[self.active_power_output_recording <= 0.0125] = 0  # Correction for all shut down
         return (possible_normally_operating_wind_turbine,
                 expected_rated_power_output_in_operating_regime,
                 pd.Series(total_pout_when_curtail, index=self.index),
-                curtailment_happen_mask)
+                curtailment_happen_mask,
+                ws_above_limit_mask,
+                ws_above_limit_regime)
 
     def maximum_likelihood_estimation_for_wind_farm_operation_regime(self, power_output_func: Callable = None, *,
                                                                      initialisation=None,
-                                                                     return_fancy: bool = False):
+                                                                     return_fancy: bool = False,
+                                                                     task: str = 'fit'):
         power_output_func = power_output_func or super(EquivalentWindFarmPowerCurve, self).__call__
-        initialisation = initialisation or self.mle_initialisation()
+        initialisation = initialisation or self.mle_initialisation(task)
         possible_normally_operating_wind_turbine = initialisation[0]
         expected_rated_power_output_in_operating_regime = initialisation[1]
         total_pout_when_curtail_values = initialisation[2].values
         curtailment_happen_mask = initialisation[3]
+        ws_above_limit_mask = initialisation[4]
+        ws_above_limit_regime = initialisation[5]
 
         # %% Find the closest normally operating WTs if no WT curtailment
         power_output = power_output_func(self.wind_speed_recording)
@@ -1004,10 +1035,11 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         normally_operating_number = np.argmin(abs_diff, axis=0)
         del power_output, power_output_scaled, abs_diff
 
+        # %% Reassign when it is operating regime when WS > WS_cut_out and flat but there is not curtailment
+        ws_above_limit_no_curt_mask = np.bitwise_and(ws_above_limit_mask, ~curtailment_happen_mask)
+        normally_operating_number[ws_above_limit_no_curt_mask] = ws_above_limit_regime[ws_above_limit_no_curt_mask]
+
         # %% Reassign normally operating WTs when there is curtailment
-        # diff = (total_pout_when_curtail_values[curtailment_happen_mask] -
-        #         expected_rated_power_output_in_operating_regime.values[:, np.newaxis] * power_output_func(
-        #             self.wind_speed_recording[curtailment_happen_mask]))
         diff = (total_pout_when_curtail_values[curtailment_happen_mask] -
                 expected_rated_power_output_in_operating_regime.values[:, np.newaxis])
         revise = []
@@ -1078,7 +1110,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 attention_weights[this_bin_mask] = 1 / this_bin_number
         attention_weights /= (np.sum(attention_weights) / len(attention_weights))
         assert ~(np.isnan(attention_weights).any())
-        initialisation = self.mle_initialisation()
+        initialisation = self.mle_initialisation('fit')
 
         def func(params_array):
             model_output = self.call_static_func()(wind_speed, *(params_array[:self.params.__len__()]))
@@ -1104,7 +1136,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         This is to initialise the params using guessed fully operating regime
         :return:
         """
-        mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(PowerCurveByMfr('special').__call__)
+        mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(PowerCurveByMfr('1.12').__call__)
         guess_file_path = save_to_file_path.parent / (save_to_file_path.stem + '_S1_guess.pkl')
         guess_params = load_pkl_file(guess_file_path)
         # Fit S1
@@ -1187,13 +1219,13 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 initialised_params = ga_model.best_variable  # This will initialise the next GA using the current best
                 save_pkl_file(save_to_file_path, ga_model_run_results)
             else:
-                existing_results = existing_results[-1]
                 # Keep the cloud version
-                if existing_results['function'] <= this_run_loss:
-                    initialised_params = existing_results['variable']
+                if loss_func(existing_results[-1]['variable']) < this_run_loss:
+                    initialised_params = existing_results[-1]['variable']
                 else:
                     ga_model_run_results.append(ga_model.output_dict)
                     initialised_params = ga_model.best_variable
+                    # Update the existing by extending
                     save_pkl_file(save_to_file_path, ga_model_run_results)
         # %% Update 8PL PC
         for this_param_index, this_param in enumerate(self.ordered_params):
