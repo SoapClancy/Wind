@@ -52,11 +52,7 @@ DARLY_WIND_FARM_RAW_MOB_PC = PowerCurveByMethodOfBins(
 # %% Zelengrad WF
 ZELENGRAD_WIND_FARM = load_croatia_data('Zelengrad')['Zelengrad']  # type: WF
 ZELENGRAD_WIND_FARM.number_of_wind_turbine = 14
-# Aggregate to 10 min
-# ZELENGRAD_WIND_FARM = ZELENGRAD_WIND_FARM.resample(
-#     '10T',
-#     resampler_obj_func_source_code="agg(lambda x: np.mean(x.values))"
-# )  # type: WF
+
 # In this paper, only year 2015 to year 2019 data will be used
 ZELENGRAD_WIND_FARM = ZELENGRAD_WIND_FARM[np.bitwise_and(
     ZELENGRAD_WIND_FARM.index >= datetime.datetime(year=2015, month=1, day=1),
@@ -454,13 +450,11 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines
             darly_wind_farm_single.plot(operating_regime=operating_regime, not_show_color_bar=True)
             wf_pc_obj.assess_fit_2d_scatters(
                 operating_regime=operating_regime,
-                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
                 original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
             )
         else:
             wf_pc_obj.assess_fit_time_series(
                 operating_regime=operating_regime,
-                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
                 original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
             )
 
@@ -498,16 +492,17 @@ def fit_or_analyse_zelengrad_wind_farm_power_curve_model(task: str):
         wf_pc_obj, operating_regime = zelengrad_wind_farm.operating_regime_detector('load')
         wf_pc_obj.bin_width = BIN_WIDTH
         if task == '2D plot check':
+            zelengrad_wind_farm[operating_regime('S1')].plot()
             zelengrad_wind_farm.plot(operating_regime=operating_regime, not_show_color_bar=False)
             wf_pc_obj.assess_fit_2d_scatters(
                 operating_regime=operating_regime,
-                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
                 original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC
             )
+            operating_regime.report()
+
         else:
             wf_pc_obj.assess_fit_time_series(
                 operating_regime=operating_regime,
-                total_curtailment_amount=wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime()[1],
                 original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC
             )
 
@@ -531,6 +526,22 @@ def fit_or_analyse_vratarusa_wind_farm_power_curve_model(task: str):
         vratarusa_wind_farm.operating_regime_detector('fit')
 
 
+def fit_or_analyse_zelengrad_10min_power_curve_model(task: str):
+    assert task in ('time series check', '2D plot check', 'fit')
+
+    # Make sure the global variable DARLY_WIND_FARM_RAW will not be changed accidentally,
+    # Also, change the obj_name attribute, since they are now treated as single-sensor measurements
+    # Aggregate to 10 min
+    zelengrad_wind_farm_10min = ZELENGRAD_WIND_FARM.resample(
+        '10T',
+        resampler_obj_func_source_code="agg(lambda x: np.mean(x.values))"
+    )  # type: WF
+    zelengrad_wind_farm_10min.obj_name = 'Zelengrad single 10min-resol'
+    zelengrad_wind_farm_10min['active power output'] /= zelengrad_wind_farm_10min.rated_active_power_output
+    zelengrad_wind_farm_10min.rated_active_power_output = 1
+    zelengrad_wind_farm_10min.plot()
+
+
 # VRATARUSA_WIND_FARM
 if __name__ == '__main__':
     # %% Data exploratory
@@ -549,11 +560,10 @@ if __name__ == '__main__':
     # %% WF-level PC model study (WITHOUT known wind turbines)
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit')
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='time series check')
-    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')
-    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
-    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
 
-    # fit_or_analyse_vratarusa_wind_farm_power_curve_model(task='fit')
+    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')
+    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
+    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
 
     # %% Test or debug codes, please ignore:
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')
