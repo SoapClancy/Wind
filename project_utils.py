@@ -13,3 +13,7 @@ WS_POUT_2D_PLOT_KWARGS = {
 WS_POUT_SCATTER_ALPHA = 0.5
 
 WS_POUT_SCATTER_SIZE = 1
+
+MFR_KWARGS = ({'ws': range(30), 'marker': 's', 's': 12, 'zorder': 300},
+              {'ws': range(30), 'marker': '*', 'color': 'black', 's': 16, 'zorder': 300},
+              {'ws': range(30), 'marker': '+', 'color': 'lime', 's': 16, 'zorder': 300})

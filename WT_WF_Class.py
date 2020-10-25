@@ -75,6 +75,8 @@ class WTandWFBase(PhysicalInstanceDataFrame):
     def plot(self, *,
              ax=None,
              plot_mfr: Iterable[PowerCurveByMfr] = None,
+             mfr_kwargs: Sequence[dict] = None,
+             mfr_mode: str = 'continuous',
              plot_scatter_pc: bool = False,
              **kwargs):
         ax = scatter(self['wind speed'].values,
@@ -88,8 +90,12 @@ class WTandWFBase(PhysicalInstanceDataFrame):
                                      ))
                      )
         if plot_mfr:
-            for this_mfr_pc in plot_mfr:
-                ax = this_mfr_pc.plot(ax=ax)
+            for i, this_mfr_pc in enumerate(plot_mfr):
+                if mfr_kwargs is not None:
+                    this_mfr_kwargs = mfr_kwargs[i]
+                else:
+                    this_mfr_kwargs = {}
+                ax = this_mfr_pc.plot(ax=ax, mode=mfr_mode, **this_mfr_kwargs)
         if plot_scatter_pc:
             ax = PowerCurveByMethodOfBins(self['wind speed'].values,
                                           self['active power output'].values / self.rated_active_power_output).plot(
