@@ -9,7 +9,7 @@ from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_li
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, IntOneDimensionNdarray
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, load_pkl_file, \
     load_exist_npy_file_otherwise_run_and_save
-from project_utils import project_path_
+from project_utils import *
 from pathlib import Path
 from Data_Preprocessing.float_precision_control_Func import \
     covert_to_str_one_dimensional_ndarray
@@ -24,27 +24,34 @@ from Ploting.adjust_Func import adjust_lim_label_ticks
 from UnivariateAnalysis_Class import UnivariateGaussianMixtureModel, GaussianMixture
 from matplotlib import cm, colors
 from scipy.stats import norm
+from itertools import product
+from functools import reduce
+from tqdm import tqdm
+import copy
+import matplotlib.pyplot as plt
 
 # %% Global variables
 # choose manufacturer power curve
-FIXED_MFR_PC = PowerCurveByMfr('1.225')
+FIXED_MFR_PC = PowerCurveByMfr('1.12')
 # load wind turbine
 wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
-THIS_WIND_TURBINE = wind_turbines[0]
+THIS_WIND_TURBINE = wind_turbines[1]
+outlier = load_pkl_file(THIS_WIND_TURBINE.default_results_saving_path['outlier'])['DataCategoryData obj']
+THIS_WIND_TURBINE = THIS_WIND_TURBINE[~outlier('CAT-III')]
 # choose wind speed bins and the wind speed std. in each bin
 wind_speed = THIS_WIND_TURBINE['wind speed'].values
 wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
-mob = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5)
-RANGE_MASK = np.bitwise_and(mob.array_of_bin_boundary[:, 1] >= 0,
-                            mob.array_of_bin_boundary[:, 1] <= 30)
-WIND_SPEED_RANGE = mob.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
-WIND_SPEED_STD_RANGE = mob.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
-WIND_SPEED_STD_UCT = mob.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
+MOB = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5, first_bin_left_boundary=0)
+RANGE_MASK = np.bitwise_and(MOB.array_of_bin_boundary[:, 1] >= 0,
+                            MOB.array_of_bin_boundary[:, 1] <= 29.6)
+WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
+WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
+WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
 SIMULATION_RESOLUTION = 10
-SIMULATION_TRACES = 10_000_000
+SIMULATION_TRACES = 1_000_000
 SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
 
-del wind_turbines, wind_speed, wind_speed_std, mob
+del wind_turbines, wind_speed, wind_speed_std
 
 
 def plot_raw_wind_turbine_data(_ax=None):
@@ -58,27 +65,38 @@ def plot_raw_wind_turbine_data(_ax=None):
     )
 
 
-def plot_mfr_pc(_ax, **kwargs):
-    _ax = FIXED_MFR_PC.plot(np.concatenate((range(0, 26),
-                                            [25 + float_eps * 100],
-                                            range(26, 31))),
-                            ax=_ax, zorder=300, mode='continuous')
-    _ax.legend(loc='upper left')
-    _ax = adjust_lim_label_ticks(_ax, x_lim=(-0.5, 30.5))
+def plot_mfr_pc(_ax, *, mfr_pc_obj=None, **kwargs):
+    mfr_pc_obj = mfr_pc_obj or FIXED_MFR_PC
+
+    # _ax = mfr_pc_obj.plot(np.concatenate((range(0, 26),
+    #                                       [25 + float_eps * 100],
+    #                                       range(26, 31))),
+    #                       ax=_ax, zorder=300, mode='continuous')
+    if mfr_pc_obj.air_density == '0.97':
+        mfr_pc_obj_kwargs = MFR_KWARGS[0]
+    elif mfr_pc_obj.air_density == '1.12':
+        mfr_pc_obj_kwargs = MFR_KWARGS[1]
+    elif mfr_pc_obj.air_density == '1.27':
+        mfr_pc_obj_kwargs = MFR_KWARGS[2]
+    else:
+        raise
+    _ax = mfr_pc_obj.plot(**mfr_pc_obj_kwargs,
+                          ax=_ax, mode='discrete')
     return _ax
 
 
-def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kwargs):
+def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, *, mfr_pc_obj=None):
     _ax = plot_from_uncertainty_like_dataframe(
         WIND_SPEED_RANGE,
         uncertainty_dataframe,
-        covert_to_str_one_dimensional_ndarray(np.arange(0, 50, 0.5), '0.001'),
+        covert_to_str_one_dimensional_ndarray(
+            np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5),
+            '0.001'),
         ax=_ax,
-        **kwargs
     )
-    _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(68).iloc[0] + uncertainty_dataframe(68).iloc[1]) / 2,
-                 ax=_ax, label='1' + r'$\sigma$' + ' %' + '\nrange mean', color='fuchsia', linestyle='--')
-    return plot_mfr_pc(_ax)
+    # _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(68).iloc[0] + uncertainty_dataframe(68).iloc[1]) / 2,
+    #              ax=_ax, label='1' + r'$\sigma$' + ' %' + '\nrange mean', color='fuchsia', linestyle='--')
+    return plot_mfr_pc(_ax, mfr_pc_obj=mfr_pc_obj)
 
 
 def uncertainty_plot_25_75(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kwargs):
@@ -97,8 +115,8 @@ def uncertainty_plot_25_75(uncertainty_dataframe: UncertaintyDataFrame, _ax=None
 
 def uncertainty_plot_sigma(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kwargs):
     uncertainty_dataframe.columns = WIND_SPEED_RANGE
-    # _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
-    #              color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
+    _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe.iloc[-2].values,
+                 color=(0, 1, 0), linestyle='--', ax=_ax, label='SIM mean')
     # cmap = cm.get_cmap('bone')
     # norm = colors.Normalize(vmin=0, vmax=int(lower_half_percentiles.size))
     _ax = plot_mfr_pc(_ax, y_lim=(-0.2, 1.2))
@@ -125,31 +143,37 @@ def uncertainty_plot_sigma(uncertainty_dataframe: UncertaintyDataFrame, _ax=None
 #     return ax
 
 def plot_wind_speed_std():
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, color=(0, 1, 0), linestyle='--', label='Mean')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, color='fuchsia', linestyle='--', label='Mean')
     ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(0).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-',
                 color='orange', label='Median')
 
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-',
-                label='1' + r'$\sigma$' + ' %', color='grey')
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-',
-                color='grey')
-
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[0].values[RANGE_MASK], ax=ax, linestyle='--',
-                label='2' + r'$\sigma$' + ' %', color='fuchsia')
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[1].values[RANGE_MASK], ax=ax, linestyle='--',
-                color='fuchsia')
-
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-.',
-                label='3' + r'$\sigma$' + ' %', color='royalblue')
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-.',
-                color='royalblue')
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-',
+    #             label='1' + r'$\sigma$' + ' %', color='grey')
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-',
+    #             color='grey')
     #
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[0].values[RANGE_MASK], ax=ax, linestyle=':',
-                label='4.5' + r'$\sigma$' + ' %', color='black')
-    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[1].values[RANGE_MASK], ax=ax, linestyle=':',
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[0].values[RANGE_MASK], ax=ax, linestyle='--',
+    #             label='2' + r'$\sigma$' + ' %', color='fuchsia')
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=2).iloc[1].values[RANGE_MASK], ax=ax, linestyle='--',
+    #             color='fuchsia')
+    #
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[0].values[RANGE_MASK], ax=ax, linestyle='-.',
+    #             label='3' + r'$\sigma$' + ' %', color='royalblue')
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=3).iloc[1].values[RANGE_MASK], ax=ax, linestyle='-.',
+    #             color='royalblue')
+    # #
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[0].values[RANGE_MASK], ax=ax, linestyle=':',
+    #             label='4.5' + r'$\sigma$' + ' %', color='black')
+    # ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=4.5).iloc[1].values[RANGE_MASK], ax=ax, linestyle=':',
+    #             color='black', x_label='Wind Speed [m/s]', y_label='Wind Speed Std. [m/s]',
+    #             x_lim=(-0.5, 30.5))
+    #
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1.5).iloc[0].values[RANGE_MASK], ax=ax, linestyle=':',
+                label=r'6.68 to 93.32 percentiles', color='black')
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_UCT(by_sigma=1.5).iloc[1].values[RANGE_MASK], ax=ax, linestyle=':',
                 color='black', x_label='Wind Speed [m/s]', y_label='Wind Speed Std. [m/s]',
-                x_lim=(-0.5, 30.5))
-    ax.set_ylim(-0.05, 8.6)
+                x_lim=WS_POUT_2D_PLOT_KWARGS['x_lim'])
+    ax.set_ylim(-0.05, 5.9)
     plt.gca().legend(ncol=4, loc='upper center', prop={'size': 10})
     return ax
 
@@ -358,28 +382,41 @@ def sasa_high_resol_check():
         laji_ax.legend(loc=5)
 
 
-def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new():
+def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_prod, **kwargs):
+    this_pc = PowerCurveByMfr(_this_prod[0])
+    wind_speed_std_range = MOB.cal_mob_statistic_eg_quantile(_this_prod[1])[RANGE_MASK, 1]
+
     @load_exist_pkl_file_otherwise_run_and_save(
-        Path(project_path_) / 'Data/Results/transient_study/Energies_Review_paper_2020/mine_all_range_check.pkl')
+        Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/'
+                              f'mine_rho_{_this_prod[0]}_std_{_this_prod[1]}.pkl')
     def get_results():
-        mode = 'cross sectional'
         # Initialise Wind instance
-        wind = Wind(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE)
-        high_resol_wind = wind.simulate_transient_wind_speed_time_series(
-            resolution=SIMULATION_RESOLUTION,
-            traces_number_for_each_recording=SIMULATION_TRACES,
-            mode=mode
-        )
-        _simulated_pout = FIXED_MFR_PC.cal_with_hysteresis_control_using_high_resol_wind(
-            high_resol_wind,
-            return_percentiles=SIMULATION_RETURN_PERCENTILES,
-            mode=mode
-        )
+        _simulated_pout = []
+        for this_ws, this_ws_std in tqdm(zip(WIND_SPEED_RANGE, wind_speed_std_range), total=len(WIND_SPEED_RANGE)):
+            wind = Wind(this_ws, this_ws_std)
+            high_resol_wind = wind.simulate_transient_wind_speed_time_series(
+                resolution=SIMULATION_RESOLUTION,
+                traces_number_for_each_recording=SIMULATION_TRACES,
+                sigma_func=wind.learn_transition_by_looking_at_actual_high_resol()
+            )
+            template = UncertaintyDataFrame.init_from_template(
+                columns_number=len(high_resol_wind),
+                percentiles=np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0],
+                                      UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] + 1,
+                                      0.001)
+            )
+            this_simulated_pout = this_pc.cal_with_hysteresis_control_using_high_resol_wind(
+                high_resol_wind,
+                return_percentiles=template,
+            )
+            this_simulated_pout = this_simulated_pout.rename(columns={0: str(this_ws)})
+            _simulated_pout.append(this_simulated_pout)
+        _simulated_pout = reduce(lambda a, b: pd.merge(a, b, left_index=True, right_index=True), _simulated_pout)
         return _simulated_pout
 
     simulated_pout = get_results()  # type: UncertaintyDataFrame
 
-    return uncertainty_plot_sigma(UncertaintyDataFrame(simulated_pout))
+    return uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc, **kwargs)
 
 
 def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old():
@@ -471,10 +508,38 @@ def demonstration_iec_standard():
 
 
 if __name__ == "__main__":
-    ax_mine_new = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new()
+    # %% 无聊的各种排列组合
+    air_density_list = ('0.97', '1.12', '1.27')
+    ws_std_list = ([UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0] / 100],
+                   'mean',
+                   [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] / 100])
+    prod = list(product(air_density_list, ws_std_list))
+    for i, this_prod in enumerate(prod):
+        # if i == 8:
+        #     continue
+        fig, ax_mine_new = plt.subplots(figsize=(5, 5 * 0.618), constrained_layout=True)
+
+        ax_mine_new = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(this_prod,
+                                                                                           _ax=ax_mine_new)
+        ax_mine_new.legend(loc='lower center', prop={'size': 10})
+        ax_mine_new = adjust_lim_label_ticks(ax_mine_new, x_lim=WS_POUT_2D_PLOT_KWARGS['x_lim'])
+
+        left, bottom, width, height = [0.13, 0.56, 0.235, 0.415]
+        ax_in = fig.add_axes([left, bottom, width, height])
+        ax_in = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(this_prod, _ax=ax_in)
+        ax_in.set_xlim(2.9, 8.1)
+        ax_in.set_ylim(-0.005, 0.47)
+        ax_in.set_xticklabels('')
+        ax_in.set_yticklabels('')
+        ax_in.set_xlabel('')
+        ax_in.set_ylabel('')
+        ax_in.grid(False)
+        ax_in.get_legend().remove()
+        ax_mine_new.indicate_inset_zoom(ax_in)
+
     #     # ax_mine_old = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old()
     #     # ax_sasa = sasa_algorithm_to_cal_possible_pout_range()
     #     # ax_sasa_pmaps = sasa_pmaps_to_cal_possible_pout_range()
     #     # ax_iec_standard = demonstration_iec_standard()
-    # ax_std = plot_wind_speed_std()
-#     # ax_sasa_high_resol = sasa_high_resol_check()
+    ax_std = plot_wind_speed_std()
+    # ax_sasa_high_resol = sasa_high_resol_check()

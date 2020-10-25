@@ -143,14 +143,14 @@ class Wind:
                                     scales *= len(state_parts)
                                 if len(state_parts) != len(scales):
                                     raise ValueError('`scale` must broadcast with `state_parts`.')
-                                seed_stream = SeedStream(seed, salt='CustomRandomWalkNormalFn')
                                 next_state_parts = [
                                     tf.random.normal(  # pylint: disable=g-complex-comprehension
                                         mean=state_part,
                                         stddev=scale_part,
                                         shape=tf.shape(state_part),
                                         dtype=dtype_util.base_dtype(state_part.dtype),
-                                        seed=seed_stream())
+                                        seed=1
+                                    )
                                     for scale_part, state_part in zip(scales, state_parts)
                                 ]
 
@@ -166,13 +166,14 @@ class Wind:
                                                             current_state=current_state,
                                                             kernel=tfp.mcmc.RandomWalkMetropolis(
                                                                 this_recording_distribution.log_prob,
-                                                                new_state_fn=custom_random_walk_normal_fn()
+                                                                # new_state_fn=custom_random_walk_normal_fn()
                                                             ),
                                                             # kernel=tfp.mcmc.HamiltonianMonteCarlo(
                                                             #     this_recording_distribution.log_prob,
                                                             #     num_leapfrog_steps=2,
                                                             #     step_size=0.5),
-                                                            trace_fn=None)
+                                                            trace_fn=None,
+                                                            seed=1)
                         return _this_trace
 
                     # sample_func_faster = tf.function(sample_func, autograph=False, experimental_compile=True)

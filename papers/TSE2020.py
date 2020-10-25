@@ -1,7 +1,7 @@
 from PowerCurve_Class import *
 from File_Management.load_save_Func import load_pkl_file
 from File_Management.path_and_file_management_Func import try_to_find_file, try_to_find_folder_path_otherwise_make_one
-from project_utils import project_path_, WS_POUT_SCATTER_ALPHA, WS_POUT_2D_PLOT_KWARGS, WS_POUT_SCATTER_SIZE
+from project_utils import *
 from ErrorEvaluation_Class import DeterministicError
 import pandas as pd
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv, load_croatia_data
@@ -21,6 +21,9 @@ from locale import setlocale, LC_ALL
 import matplotlib.ticker as ticker
 from UnivariateAnalysis_Class import UnivariateGaussianMixtureModel, GaussianMixture
 from Filtering.sklearn_novelty_and_outlier_detection_Func import use_isolation_forest
+from Filtering.sklearn_novelty_and_outlier_detection_Func import DBSCAN, LocalOutlierFactor
+from sklearn.preprocessing import MinMaxScaler
+from Filtering.dbscan_custom_func import dbscan_custom
 
 setlocale(LC_ALL, "en_US")
 remove_win10_max_path_limit()
@@ -33,6 +36,7 @@ This paper uses Dalry WF (especially its WT2 for individual WT analysis) and Zel
 MFR_PC_LIMIT = (PowerCurveByMfr(air_density='0.97'),
                 PowerCurveByMfr(air_density='1.12', color='black', linestyle=':'),
                 PowerCurveByMfr(air_density='1.27', color='lime', linestyle='--'))
+
 # %% Darly wind turbines
 DARLY_WIND_TURBINES = load_raw_wt_from_txt_file_and_temperature_from_csv()
 # This paper essentially only have 2D analysis
@@ -355,8 +359,8 @@ def cat_6_demo_time_series():
         # mean and media
         ax = vlines(float(sim_results[0][this_index].loc['mean'].values), color='black', label='Simulation mean',
                     linestyles=':', ymin=y_lim[0], ymax=y_lim[-1], ax=ax, y_lim=y_lim)
-        ax = vlines(sim_results[0][this_index](50).values[0, 0], color='red', label='Simulation median', linestyles='--',
-                    ymin=y_lim[0], ymax=y_lim[-1], ax=ax, y_lim=y_lim)
+        ax = vlines(sim_results[0][this_index](50).values[0, 0], color='red', label='Simulation median',
+                    linestyles='--', ymin=y_lim[0], ymax=y_lim[-1], ax=ax, y_lim=y_lim)
         # 6.68% - 93.32%
         ax = vlines(np.percentile(sim_results[1][this_index].flatten(),
                                   UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0]),
@@ -370,12 +374,11 @@ def cat_6_demo_time_series():
         ax = vlines(iec_mean[this_index],
                     color='cyan', label='Expected value by [11, 42]', linestyles='-',
                     ymin=y_lim[0], ymax=y_lim[-1], ax=ax, y_lim=y_lim, legend_ncol=3)
-    #
+        #
         if this_index == (index_mapper.__len__() - 1):
             ax.set_yticks([0, 5, 10])
             ax.set_yticklabels(['0', '5', '10'])
         adjust_legend_in_ax(ax, protocol='Outside center right', ncol=3)
-    tt = 1
 
 
 def plot_raw_data_for_outlier_demo():
@@ -383,9 +386,75 @@ def plot_raw_data_for_outlier_demo():
     This function is to provide the very first figures in the paper, which shows that there seem to be outlier
     :return:
     """
+    lof_and_dbscan_results = lof_and_dbscan_power_curve()
+    for i, to_plot_obj in enumerate((DARLY_WIND_TURBINE_2, DARLY_WIND_FARM_RAW, ZELENGRAD_WIND_FARM)):
+        ax = to_plot_obj.plot(plot_mfr=MFR_PC_LIMIT, mfr_mode='discrete', mfr_kwargs=MFR_KWARGS, plot_scatter_pc=True)
+        ax = lof_and_dbscan_results[to_plot_obj.obj_name + '_DBSCAN'].plot(
+            ax=ax,
+            label='DBSCAN PC', linestyle='--', color='dimgray', plot_recording=False)
+        ax = lof_and_dbscan_results[to_plot_obj.obj_name + '_LOF'].plot(
+            ax=ax,
+            label='LOF PC', linestyle='-.', color='darkorange', plot_recording=False)
+        adjust_legend_in_ax(ax, loc='upper left')
 
-    for to_plot_obj in (DARLY_WIND_TURBINE_2, DARLY_WIND_FARM_RAW, ZELENGRAD_WIND_FARM):
-        exec("to_plot_obj.plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True)")
+
+def lof_and_dbscan_power_curve():
+    @load_exist_pkl_file_otherwise_run_and_save(project_path_ / r"Data\Results\Filtering\TSE2020_dbscan_lof\pcs.pkl")
+    def func():
+        power_curves = {}
+        # ZELENGRAD_WIND_FARM
+        for this_obj in (DARLY_WIND_TURBINE_2, DARLY_WIND_FARM_RAW, ZELENGRAD_WIND_FARM):
+            this_ws_pout_data = copy.deepcopy(this_obj)
+            this_ws_pout_data['active power output'] /= this_obj.rated_active_power_output
+            this_ws_pout_data = this_ws_pout_data[['wind speed', 'active power output']].values
+            this_ws_pout_data = this_ws_pout_data[~np.any(np.isnan(this_ws_pout_data), axis=1)]
+            min_max_scaler = MinMaxScaler()
+            min_max_scaler.fit(this_ws_pout_data)
+            this_ws_pout_data = min_max_scaler.transform(this_ws_pout_data)
+            # %% DBSCAN
+            if this_obj.obj_name != "Zelengrad WF":
+                dbscan_clustering = DBSCAN(eps=0.025, min_samples=5).fit(this_ws_pout_data)
+                dbscan_clustering_results = dbscan_clustering.labels_
+            else:
+                # %% 应该要用ELKI的
+                # dbscan_clustering = DBSCAN(eps=0.0025, min_samples=5).fit(this_ws_pout_data)
+                # dbscan_clustering_results = dbscan_clustering.labels_
+                elki_results_path = project_path_ / r"Data\Results\Filtering\TSE2020_dbscan_lof\ELKI\cluster_0.txt"
+                elki_results = pd.read_table(elki_results_path, skiprows=8, sep=r'\s+|=', header=None)
+                elki_results = elki_results.values[:, 1]
+                dbscan_clustering_results = np.full(this_ws_pout_data.shape[0], fill_value=-1)
+                dbscan_clustering_results[(elki_results.astype(int) - 1).tolist()] = 0
+            #
+            # %% LOF
+            lof_clustering_results = LocalOutlierFactor(n_neighbors=300).fit_predict(this_ws_pout_data)
+
+            this_ws_pout_data = min_max_scaler.inverse_transform(this_ws_pout_data)
+            power_curves.setdefault(
+                this_obj.obj_name + '_DBSCAN',
+                PowerCurveByMethodOfBins(
+                    wind_speed_recording=this_ws_pout_data[dbscan_clustering_results == 0, 0],
+                    active_power_output_recording=this_ws_pout_data[dbscan_clustering_results == 0, 1],
+                    bin_width=BIN_WIDTH
+                )
+            )
+            power_curves.setdefault(
+                this_obj.obj_name + '_LOF',
+                PowerCurveByMethodOfBins(
+                    wind_speed_recording=this_ws_pout_data[lof_clustering_results != -1, 0],
+                    active_power_output_recording=this_ws_pout_data[lof_clustering_results != -1, 1],
+                    bin_width=BIN_WIDTH
+                )
+            )
+            """DEBUG"""
+            # ax = None
+            # for this_label in np.unique(dbscan_clustering.labels_):
+            #     ax = scatter(*this_ws_pout_data[this_label == dbscan_clustering.labels_].T, ax=ax,
+            #                  label=str(this_label), legend_ncol=2)
+            # ax = scatter(*this_ws_pout_data[lof_clustering_results == -1].T, label='-1')
+            # scatter(*this_ws_pout_data[lof_clustering_results != -1].T, label='0', ax=ax)
+        return power_curves
+
+    return func()
 
 
 def individual_wind_turbine_outliers_outlier_detector():
@@ -566,9 +635,12 @@ def fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines
                 original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
             )
         else:
+            # lof_and_dbscan_results = lof_and_dbscan_power_curve()
             wf_pc_obj.assess_fit_time_series(
                 operating_regime=operating_regime,
                 original_scatters_pc=DARLY_WIND_FARM_RAW_MOB_PC
+                # original_scatters_pc=lof_and_dbscan_results['Dalry raw_DBSCAN']
+                # original_scatters_pc=lof_and_dbscan_results['Dalry raw_LOF']
             )
 
 
@@ -614,9 +686,12 @@ def fit_or_analyse_zelengrad_wind_farm_power_curve_model(task: str):
             operating_regime.report()
 
         else:
+            # lof_and_dbscan_results = lof_and_dbscan_power_curve()
             wf_pc_obj.assess_fit_time_series(
                 operating_regime=operating_regime,
-                original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC
+                original_scatters_pc=ZELENGRAD_WIND_FARM_RAW_MOB_PC,
+                # original_scatters_pc=lof_and_dbscan_results['Zelengrad WF_DBSCAN']
+                # original_scatters_pc=lof_and_dbscan_results['Zelengrad WF_LOF']
             )
 
 
@@ -657,12 +732,16 @@ def fit_or_analyse_zelengrad_10min_power_curve_model(task: str):
 
 # VRATARUSA_WIND_FARM
 if __name__ == '__main__':
+    # %% LOF and DBSCAN
+    pass
+    # cc = lof_and_dbscan_power_curve()
+    #
     # %% Data exploratory
-    # plot_raw_data_for_outlier_demo()
+    plot_raw_data_for_outlier_demo()
     #
     # %% WT-level outlier detector and plot
     # cat_6_demo()
-    cat_6_demo_time_series()
+    # cat_6_demo_time_series()
     # individual_wind_turbine_outliers_outlier_detector()
     # wind_turbine_level_outlier_results_demo()
 
