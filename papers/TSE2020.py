@@ -468,8 +468,8 @@ def individual_wind_turbine_outliers_outlier_detector():
 def wind_turbine_level_outlier_results_demo():
     all_wind_turbine_results = []
     for i, this_wt in enumerate(load_raw_wt_from_txt_file_and_temperature_from_csv()):
-        # this_wt.plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True, title=f"WT{i + 1}")
-        # this_wt.outlier_plot(title=f"WT{i + 1}")
+        this_wt.plot(plot_mfr=MFR_PC_LIMIT, plot_scatter_pc=True, title=f"WT{i + 1}")
+        this_wt.outlier_plot(title=f"WT{i + 1}")
         all_wind_turbine_results.append(this_wt.outlier_detector().report())
     all_wind_turbine_results = pd.concat([x['number'] for x in all_wind_turbine_results], axis=1)
     all_wind_turbine_results = all_wind_turbine_results.sum(axis=1)
@@ -734,10 +734,11 @@ def fit_or_analyse_zelengrad_10min_power_curve_model(task: str):
 if __name__ == '__main__':
     # %% LOF and DBSCAN
     pass
+
     # cc = lof_and_dbscan_power_curve()
     #
     # %% Data exploratory
-    plot_raw_data_for_outlier_demo()
+    # plot_raw_data_for_outlier_demo()
     #
     # %% WT-level outlier detector and plot
     # cat_6_demo()
@@ -750,7 +751,7 @@ if __name__ == '__main__':
     # darly_wind_farm_operating_regime()
 
     # %% WF-level PC model study (with known wind turbines)
-    # fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='time series check')
+    # fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='2D plot check')
 
     # %% WF-level PC model study (WITHOUT known wind turbines)
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit')
@@ -765,3 +766,7 @@ if __name__ == '__main__':
     # fit_plot_and_summary_all_mfr_pc_in_all_density('summary')
     # ZELENGRAD_WIND_FARM.outlier_detector()
     # ZELENGRAD_WIND_FARM.plot()
+    DARLY_WIND_TURBINE_2[
+        load_pkl_file(DARLY_WIND_TURBINE_2.default_results_saving_path["outlier"])['DataCategoryData obj'](
+            ('CAT-IV.a', 'others'))
+    ].plot(plot_scatter_pc=True)

@@ -48,7 +48,7 @@ WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK,
 WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
 WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
 SIMULATION_RESOLUTION = 10
-SIMULATION_TRACES = 1_000_000
+SIMULATION_TRACES = 6_000_000
 SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
 
 del wind_turbines, wind_speed, wind_speed_std
@@ -90,8 +90,11 @@ def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, *, m
         WIND_SPEED_RANGE,
         uncertainty_dataframe,
         covert_to_str_one_dimensional_ndarray(
-            np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5),
-            '0.001'),
+            np.concatenate(
+                ([0.00001], np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5))
+            ),
+            # np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5),
+            '0.000001'),
         ax=_ax,
     )
     # _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(68).iloc[0] + uncertainty_dataframe(68).iloc[1]) / 2,
@@ -401,8 +404,11 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
             )
             template = UncertaintyDataFrame.init_from_template(
                 columns_number=len(high_resol_wind),
-                percentiles=np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0],
-                                      UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] + 1,
+                # percentiles=np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0],
+                #                       UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] + 1,
+                #                       0.001)
+                percentiles=np.arange(0,
+                                      100.001,
                                       0.001)
             )
             this_simulated_pout = this_pc.cal_with_hysteresis_control_using_high_resol_wind(
@@ -515,8 +521,8 @@ if __name__ == "__main__":
                    [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] / 100])
     prod = list(product(air_density_list, ws_std_list))
     for i, this_prod in enumerate(prod):
-        # if i == 8:
-        #     continue
+        if i != 7:
+            continue
         fig, ax_mine_new = plt.subplots(figsize=(5, 5 * 0.618), constrained_layout=True)
 
         ax_mine_new = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(this_prod,
