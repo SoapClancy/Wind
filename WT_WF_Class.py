@@ -929,7 +929,7 @@ class WF(WTandWFBase):
 
             "fully operating regime power curve single senor": self.results_path / f"PowerCurve/{self.__str__()}/"
                                                                                    f"fully_OPR_8PL_single_senor.pkl",
-
+            "resample_and_also_resample_operating_regime": self.results_path / f"resample/{self.__str__()}/results.pkl"
         }
         for x in saving_path.values():
             try_to_find_folder_path_otherwise_make_one(x.parent)
@@ -1069,6 +1069,24 @@ class WF(WTandWFBase):
                        'DataCategoryData obj': outlier})
         return outlier
 
+    def outlier_detector_for_extra_feature(self) -> ndarray:
+        """
+        Return outlier for extra dim
+        :return:
+        """
+        considered_extra_feature = (set(self.columns) - {'wind speed',
+                                                         'active power output'}) & set(FEATURE_NORMAL_RANGE)
+        # Outside boundary outlier
+        out_of_range_outlier_mask = ~self.data_category_inside_boundary({key: FEATURE_NORMAL_RANGE[key]
+                                                                         for key in considered_extra_feature})
+        # Linear outlier
+        linear_outlier_mask = self.data_category_is_linearity('30T',
+                                                              constant_error={key: 0.00001
+                                                                              for key in considered_extra_feature})
+        # Combine
+        outlier_mask = np.bitwise_or(out_of_range_outlier_mask, linear_outlier_mask)
+        return outlier_mask
+
     def operating_regime_detector(self, task: str = 'load') -> Tuple[EquivalentWindFarmPowerCurve, DataCategoryData]:
         assert (task in ('load', 'fit')), "'Task' is not in ('load', 'fit')"
         pc_file_path = self.default_results_saving_path["fully operating regime power curve single senor"]
@@ -1113,6 +1131,62 @@ class WF(WTandWFBase):
             )[-1]
             save_pkl_file(operating_regime_file_path, operating_regime)
             return wf_pc_obj, operating_regime
+
+    def resample_and_also_resample_operating_regime(self,
+                                                    resample_args: tuple = ('10T',),
+                                                    resample_kwargs: dict = None, *,
+                                                    operating_regime_file_path: Path = None,
+                                                    additional_outlier_mask: ndarray):
+        """
+        Resample the wind farm, and most importantly, resample the operating regime.
+        The method to resample the operating regime is to select the most frequent values in new sampling window.
+        :return:
+        """
+
+        @load_exist_pkl_file_otherwise_run_and_save(
+            self.default_results_saving_path['resample_and_also_resample_operating_regime'])
+        def func():
+            nonlocal operating_regime_file_path
+            nonlocal resample_kwargs
+            self_copy = copy.deepcopy(self)
+
+            # For single sensor WF, the operating regime must be detected using as high resolution data as possible.
+            # Therefore, object function 'operating_regime_detector' must be called (so there will be results in
+            # self.default_results_saving_path["operating regime single senor"], or as specified)
+            if operating_regime_file_path is None:
+                operating_regime_file_path = self.default_results_saving_path["operating regime single senor"]
+            operating_regime = load_pkl_file(operating_regime_file_path)  # type: DataCategoryData
+            assert operating_regime is not None
+
+            resample_kwargs = resample_kwargs or {
+                'resampler_obj_func_source_code': "agg(lambda x: np.mean(x.values))"
+            }
+            # Check outlier
+            existing_outlier = load_pkl_file(self_copy.default_results_saving_path["outlier"])['DataCategoryData obj']
+            self_copy.loc[np.bitwise_or(~existing_outlier('others'),
+                                        additional_outlier_mask), :] = np.nan
+            # Resample self
+            resampled_self = self_copy.resample(*resample_args, **resample_kwargs)
+            resampled_self.obj_name = self_copy.obj_name + f" resampled"
+
+            # Resample operating regime
+            def rolling_func(x):
+                (values, counts) = np.unique(x, return_counts=True)
+                index = np.argmax(counts)
+                return int(values[index])
+
+            rolling_obj = operating_regime.pd_view.applymap(lambda x: int(x[1:])).rolling(*resample_args)
+            resampled_operating_regime = rolling_obj.apply(rolling_func, raw=True)
+            resampled_operating_regime = resampled_operating_regime.reindex(resampled_self.index, method='nearest')
+            resampled_operating_regime = resampled_operating_regime.astype(int)
+            resampled_operating_regime = DataCategoryData(
+                abbreviation=resampled_operating_regime.applymap(lambda x: f"S{int(x)}").values.flatten(),
+                index=resampled_operating_regime.index
+            )
+
+            return resampled_self, resampled_operating_regime
+
+        return func()
 
     def plot(self, *,
              ax=None,

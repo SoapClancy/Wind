@@ -758,15 +758,15 @@ if __name__ == '__main__':
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='time series check')
 
     # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')
-    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
-    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
+    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
+    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
 
     # %% Test or debug codes, please ignore:
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')
     # fit_plot_and_summary_all_mfr_pc_in_all_density('summary')
     # ZELENGRAD_WIND_FARM.outlier_detector()
     # ZELENGRAD_WIND_FARM.plot()
-    DARLY_WIND_TURBINE_2[
-        load_pkl_file(DARLY_WIND_TURBINE_2.default_results_saving_path["outlier"])['DataCategoryData obj'](
-            ('CAT-IV.a', 'others'))
-    ].plot(plot_scatter_pc=True)
+    # DARLY_WIND_TURBINE_2[
+    #     load_pkl_file(DARLY_WIND_TURBINE_2.default_results_saving_path["outlier"])['DataCategoryData obj'](
+    #         ('CAT-IV.a', 'others'))
+    # ].plot(plot_scatter_pc=True)

@@ -18,11 +18,12 @@ from PowerCurve_Class import PowerCurveFittedBy8PLF
 from typing import Tuple
 from collections import OrderedDict
 import getpass
+from functools import reduce
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\\" + getpass.getuser() + r"\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 
 
-def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
+def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True) -> OrderedDict:
     wind_farm = OrderedDict()
     # WF rated power mapper
     wf_rated_power_mapper = {
@@ -45,6 +46,11 @@ def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
 
         def one_variable_reading(file_postfix: str):
             one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)))
+            # try:
+            #     one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)))
+            # except UnicodeDecodeError:
+            #     one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)), engine='python')
+
             one_variable.index = pd.DatetimeIndex(
                 pd.to_datetime(
                     one_variable.iloc[:, 1],
@@ -62,8 +68,24 @@ def load_croatia_data(this_wind_farm_name: str = None) -> OrderedDict:
                                    how='outer',
                                    left_index=True,
                                    right_index=True)
-        wind_farm_basic.rename(columns={'WS': 'wind speed',
-                                        'POWER': 'active power output'},
+        rename_mapper = {'WS': 'wind speed',
+                         'POWER': 'active power output'}
+        if not ws_pout_only:
+            wind_farm_press = one_variable_reading('_scada_press.csv')
+            wind_farm_temp = one_variable_reading('_scada_temp.csv')
+            wind_farm_wd = one_variable_reading('_scada_wd.csv')
+            wind_farm_basic = reduce(lambda a, b: pd.merge(a,
+                                                           b,
+                                                           how='left',
+                                                           left_index=True,
+                                                           right_index=True),
+                                     [wind_farm_basic, wind_farm_press, wind_farm_temp, wind_farm_wd])
+            rename_mapper.update({
+                'PRESS': 'pressure',
+                'TEMP': 'temperature',
+                'WD': 'wind direction',
+            })
+        wind_farm_basic.rename(columns=rename_mapper,
                                errors='raise',
                                inplace=True)
 
