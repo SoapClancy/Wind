@@ -461,7 +461,7 @@ def individual_wind_turbine_outliers_outlier_detector():
     for i, this_wt in enumerate(load_raw_wt_from_txt_file_and_temperature_from_csv()):
         this_wt.predictor_names = ('wind speed',)
         this_wt.outlier_detector()
-        # this_wt.outlier_plot(outlier)
+        this_wt.outlier_plot()
         # this_wt.outlier_report(outlier)
 
 
@@ -743,7 +743,7 @@ if __name__ == '__main__':
     # %% WT-level outlier detector and plot
     # cat_6_demo()
     # cat_6_demo_time_series()
-    # individual_wind_turbine_outliers_outlier_detector()
+    individual_wind_turbine_outliers_outlier_detector()
     # wind_turbine_level_outlier_results_demo()
 
     #
@@ -758,8 +758,8 @@ if __name__ == '__main__':
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='time series check')
 
     # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')
-    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
-    fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
+    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='2D plot check')
+    # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='time series check')
 
     # %% Test or debug codes, please ignore:
     # fit_plot_and_summary_all_mfr_pc_in_all_density('fit')

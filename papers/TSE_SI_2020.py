@@ -145,13 +145,13 @@ if __name__ == '__main__':
 
     training_data_set = get_training_or_test_data_set(this_wind_farm_training,
                                                       this_wind_farm_operating_regime_training)
-    training_data_set_for_nn = training_data_set.windowed_dataset(datetime.timedelta(days=1), batch_size=120,
+    training_data_set_for_nn = training_data_set.windowed_dataset(datetime.timedelta(days=1), batch_size=600,
                                                                   drop_remainder=True)
 
     test_data_set = get_training_or_test_data_set(this_wind_farm_test,
                                                   this_wind_farm_operating_regime_test)
-    test_data_set_for_nn = training_data_set.windowed_dataset(datetime.timedelta(days=1), batch_size=120,
-                                                              drop_remainder=True)
+    test_data_set_for_nn = test_data_set.windowed_dataset(datetime.timedelta(days=1), batch_size=600,
+                                                          drop_remainder=True)
 
     # scatter(*data_set.transformed_data.iloc[:, [2, 3]].values.T)
     # scatter(*data_set.transformed_data.iloc[:, [2, 3]][data_set.transformed_data.iloc[:, 4] == 1].values.T)
@@ -170,12 +170,110 @@ if __name__ == '__main__':
     #     tf.keras.layers.Dense(10, activation="relu"),
     #     tf.keras.layers.Dense(training_data_set_for_nn.element_spec[1].shape[-1]),
     # ])
-    cell = ed.layers.LSTMCellReparameterization(256)
+
+    # ####################2号模型#############################
+    # model = tf.keras.models.Sequential([
+    #     ed.layers.Conv1DReparameterization(filters=256, kernel_size=3,
+    #                                        strides=1, padding="causal",
+    #                                        activation="relu",
+    #                                        input_shape=training_data_set_for_nn.element_spec[0].shape[1:]),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(256),
+    #                                                       return_sequences=True)),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(512)
+    #                                                       , return_sequences=True)),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(512)
+    #                                                       , return_sequences=True)),
+    #     ed.layers.DenseReparameterization(512, activation="relu"),
+    #     ed.layers.DenseReparameterization(256, activation="relu"),
+    #     ed.layers.DenseReparameterization(training_data_set_for_nn.element_spec[1].shape[-1]),
+    # ])
+
+    # ####################3号模型#############################
+    # model = tf.keras.models.Sequential([
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(512),
+    #                                                       return_sequences=True),
+    #                                   input_shape=training_data_set_for_nn.element_spec[0].shape[1:]),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(512),
+    #                                                       return_sequences=True)),
+    #     tf.keras.layers.Dense(512, activation="relu"),
+    #     tf.keras.layers.Dense(training_data_set_for_nn.element_spec[1].shape[-1]),
+    # ])
+
+    # ####################4号模型#############################
+    # model = tf.keras.models.Sequential([
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(tf.keras.layers.LSTMCell(512),
+    #                                                       return_sequences=True),
+    #                                   input_shape=training_data_set_for_nn.element_spec[0].shape[1:]),
+    #     tf.keras.layers.Dropout(0.25),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(tf.keras.layers.LSTMCell(512),
+    #                                                       return_sequences=True)),
+    #     tf.keras.layers.Dropout(0.25),
+    #     tf.keras.layers.Dense(512, activation="relu"),
+    #     tf.keras.layers.Dense(training_data_set_for_nn.element_spec[1].shape[-1]),
+    # ])
+
+    # ####################5号模型#############################
+    # model = tf.keras.models.Sequential([
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(tf.keras.layers.LSTMCell(512),
+    #                                                       return_sequences=True),
+    #                                   input_shape=training_data_set_for_nn.element_spec[0].shape[1:]),
+    #     tf.keras.layers.Dropout(0.5),
+    #     tf.keras.layers.Bidirectional(tf.keras.layers.RNN(tf.keras.layers.LSTMCell(512),
+    #                                                       return_sequences=True)),
+    #     tf.keras.layers.Dropout(0.5),
+    #     tf.keras.layers.Dense(512, activation="relu"),
+    #     tf.keras.layers.Dense(training_data_set_for_nn.element_spec[1].shape[-1]),
+    # ])
+
+    # ####################6号模型#############################
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Bidirectional(tf.keras.layers.RNN(cell, return_sequences=True)),
-        tf.keras.layers.Dense(10, activation="relu"),
+        tf.keras.layers.Bidirectional(tf.keras.layers.RNN(ed.layers.LSTMCellReparameterization(1024),
+                                                          return_sequences=True),
+                                      input_shape=training_data_set_for_nn.element_spec[0].shape[1:]),
+        tf.keras.layers.Dense(512, activation="relu"),
         tf.keras.layers.Dense(training_data_set_for_nn.element_spec[1].shape[-1]),
     ])
-    model.compile(loss=keras.losses.mae, metrics=['mse'])
-    history = model.fit(training_data_set_for_nn, verbose=1, epochs=250, validation_data=test_data_set_for_nn)
-    # model.save('mymodel.h5')
+
+    # ####################载入模型#############################
+    model.load_weights('E:\mymodel_epoch_500.h5')
+    pass
+
+
+    class CustomCallback(keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            if epoch % 500 == 0:
+                model.save(f'E:\mymodel_epoch_{epoch}.h5')
+
+
+    model.summary()
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(), loss=keras.losses.mae, metrics=['mse'])
+    # history = model.fit(training_data_set_for_nn, verbose=2, epochs=10000, validation_data=test_data_set_for_nn,
+    #                     callbacks=[CustomCallback()], )
+
+    model.save('mymodel.h5')
+
+    test_list = list(test_data_set_for_nn.as_numpy_iterator())[0]
+    training_list = list(training_data_set_for_nn.as_numpy_iterator())[0]
+
+
+    def plot_plot(day: int):
+        day_x = test_list[0][day]
+        day_y = test_list[1][day].flatten()
+        pre = model.predict(day_x[np.newaxis, ...]).flatten()
+        ax = series(day_y, label='True')
+        ax = series(pre, label='Model', ax=ax, y_lim=(-0.05, 1.05))
+
+
+    def plot_plot_uct(day: int, test=True):
+        if test:
+            day_x = test_list[0][day]
+            day_y = test_list[1][day].flatten()
+        else:
+            day_x = training_list[0][day]
+            day_y = training_list[1][day].flatten()
+        pre = np.full((50, 144), np.nan)
+        for i in range(50):
+            pre[i] = model(day_x[np.newaxis, ...], training=True).numpy().flatten()
+        ax = series(day_y, color='r', label='True')
+        ax = series(pre.T, color='g', ax=ax, y_lim=(-0.05, 1.05))
