@@ -491,6 +491,7 @@ def darly_wind_farm_operating_regime() -> Tuple[WF, pd.DataFrame, DataCategoryDa
     # In the WF analyse, only 'CAT-I.a', 'CAT-I.b', 'CAT-II', 'CAT-IV.a' and 'others' WT recordings are used
     # wind_turbines_with_selected_recordings = []
     wind_turbine_instances_data_category = []
+
     for i in range(DARLY_WIND_TURBINES_OUTLIERS.__len__()):
         # %% rename to adapt to WF-level analysis, and the rules below are used:
         # 'CAT-I.a', 'CAT-I.b' are 'shutdown'

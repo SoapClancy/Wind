@@ -277,3 +277,4 @@ if __name__ == '__main__':
             pre[i] = model(day_x[np.newaxis, ...], training=True).numpy().flatten()
         ax = series(day_y, color='r', label='True')
         ax = series(pre.T, color='g', ax=ax, y_lim=(-0.05, 1.05))
+

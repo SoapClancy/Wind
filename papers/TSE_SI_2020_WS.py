@@ -141,7 +141,6 @@ if __name__ == '__main__':
     # model.load_weights('E:\mymodel_epoch_500.h5')
     pass
 
-
     class CustomCallback(keras.callbacks.Callback):
         def on_epoch_end(self, epoch, logs=None):
             if epoch % 25 == 0:

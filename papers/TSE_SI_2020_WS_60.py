@@ -219,6 +219,7 @@ if __name__ == '__main__':
             pre_mean_list = this_pre_mean
             day_y_list = this_day_y
         else:
+
             pre_list = np.concatenate((pre_list, this_pre))
             pre_mean_list = np.concatenate((pre_mean_list, this_pre_mean))
             day_y_list = np.concatenate((day_y_list, this_day_y))
