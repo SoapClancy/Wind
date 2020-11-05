@@ -10,12 +10,8 @@ import numpy as np
 from numpy import ndarray
 import re
 import datetime
-from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save
-from Ploting.fast_plot_Func import hist, series, scatter, vlines, hlines
+from Ploting.fast_plot_Func import series, scatter
 from BivariateAnalysis_Class import Bivariate
-from scipy.io import loadmat
-from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv, \
-    create_dalry_wind_farm_obj_using_wf_filling_missing_old
 from Time_Processing.Season_Enum import SeasonTemplate1
 import copy
 from WT_WF_Class import WT
@@ -24,9 +20,9 @@ from BivariateAnalysis_Class import MethodOfBins
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, save_pkl_file, load_npy_file, \
     load_pkl_file
 from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one
-from correlation_modeling_main import load_test_data_for_iet_paper
+from papers.rubbish.correlation_modeling_main import load_test_data_for_iet_paper
 from Ploting.uncertainty_plot_Func import series_uncertainty_plot
-from Ploting.fast_plot_Func import time_series, vlines
+from Ploting.fast_plot_Func import vlines
 from PowerCurve_Class import PowerCurve
 from ErrorEvaluation_Class import ProbabilisticErrorIETPaperMethod, EnergyBasedError, DeterministicError
 from scipy.io import loadmat, savemat
