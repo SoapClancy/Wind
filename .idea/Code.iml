@@ -5,7 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/papers/rubbish" />
     </content>
     <content url="file://$MODULE_DIR$/../../../Python_Project_common_package" />
-    <orderEntry type="jdk" jdkName="Python 3.7 (Python_Project)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.8 (Python_Project)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
