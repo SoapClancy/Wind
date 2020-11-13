@@ -62,6 +62,8 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
 
         wind_farm_wind_speed = one_variable_reading('_scada_ws.csv')
         wind_farm_power_output = one_variable_reading('_scada_pow.csv')
+        print(f"{wind_farm_name} Pout {wind_farm_power_output.index[0]} to {wind_farm_power_output.index[-1]}")
+        print(f"{wind_farm_name} WS {wind_farm_wind_speed.index[0]} to {wind_farm_wind_speed.index[-1]}")
 
         wind_farm_basic = pd.merge(wind_farm_wind_speed,
                                    wind_farm_power_output,
@@ -70,10 +72,26 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
                                    right_index=True)
         rename_mapper = {'WS': 'wind speed',
                          'POWER': 'active power output'}
+        wind_farm_press = wind_farm_temp = wind_farm_wd = None
         if not ws_pout_only:
-            wind_farm_press = one_variable_reading('_scada_press.csv')
-            wind_farm_temp = one_variable_reading('_scada_temp.csv')
-            wind_farm_wd = one_variable_reading('_scada_wd.csv')
+            try:
+                wind_farm_wd = one_variable_reading('_scada_wd.csv')
+                print(f"{wind_farm_name} WD {wind_farm_wd.index[0]} to {wind_farm_wd.index[-1]}")
+            except Exception:
+                print(f"unknown {wind_farm_name} WD")
+                continue
+            try:
+                wind_farm_temp = one_variable_reading('_scada_temp.csv')
+                print(f"{wind_farm_name} TEMP {wind_farm_temp.index[0]} to {wind_farm_temp.index[-1]}")
+            except Exception:
+                print(f"unknown {wind_farm_name} TEMP")
+                continue
+            try:
+                wind_farm_press = one_variable_reading('_scada_press.csv')
+                print(f"{wind_farm_name} PRES {wind_farm_press.index[0]} to {wind_farm_press.index[-1]}")
+            except Exception:
+                print(f"unknown {wind_farm_name} PRES")
+                continue
             wind_farm_basic = reduce(lambda a, b: pd.merge(a,
                                                            b,
                                                            how='left',
@@ -88,6 +106,8 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
         wind_farm_basic.rename(columns=rename_mapper,
                                errors='raise',
                                inplace=True)
+
+        print("*" * 50)
 
         wind_farm[wind_farm_name] = WF(
             wind_farm_basic,
@@ -260,7 +280,7 @@ if __name__ == '__main__':
     #             run_n_times=5)
     # test_pc.plot()
 
-    tt = load_croatia_data('Zelengrad')
+    tt = load_croatia_data(ws_pout_only=False)
     # tt = load_raw_wt_from_txt_file_and_temperature_from_csv()
 
     # for i in tt:

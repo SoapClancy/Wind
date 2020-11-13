@@ -30,28 +30,51 @@ from tqdm import tqdm
 import copy
 import matplotlib.pyplot as plt
 
-# %% Global variables
-# choose manufacturer power curve
-FIXED_MFR_PC = PowerCurveByMfr('1.12')
-# load wind turbine
-wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
-THIS_WIND_TURBINE = wind_turbines[1]
-outlier = load_pkl_file(THIS_WIND_TURBINE.default_results_saving_path['outlier'])['DataCategoryData obj']
-THIS_WIND_TURBINE = THIS_WIND_TURBINE[~outlier('CAT-III')]
-# choose wind speed bins and the wind speed std. in each bin
-wind_speed = THIS_WIND_TURBINE['wind speed'].values
-wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
-MOB = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5, first_bin_left_boundary=0)
-RANGE_MASK = np.bitwise_and(MOB.array_of_bin_boundary[:, 1] >= 0,
-                            MOB.array_of_bin_boundary[:, 1] <= 29.6)
-WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
-WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
-WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
-SIMULATION_RESOLUTION = 10
-SIMULATION_TRACES = 6_000_000
-SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
 
-del wind_turbines, wind_speed, wind_speed_std
+# %% Global variables
+def init_setup(wind_turbine_index: int = 1):
+    """
+
+    :param wind_turbine_index:
+    :return:
+    """
+    # source_code =
+    global FIXED_MFR_PC, THIS_WIND_TURBINE, MOB, RANGE_MASK, WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, WIND_SPEED_STD_UCT
+    global SIMULATION_RESOLUTION, SIMULATION_TRACES, SIMULATION_RETURN_PERCENTILES
+    # choose manufacturer power curve
+    FIXED_MFR_PC = PowerCurveByMfr('1.12')
+    # load wind turbine
+    wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
+    THIS_WIND_TURBINE = wind_turbines[wind_turbine_index]
+    # outlier = load_pkl_file(THIS_WIND_TURBINE.default_results_saving_path['outlier'])['DataCategoryData obj']
+    # THIS_WIND_TURBINE = THIS_WIND_TURBINE[~outlier('CAT-III')]
+    # choose wind speed bins and the wind speed std. in each bin
+    wind_speed = THIS_WIND_TURBINE['wind speed'].values
+    wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
+    MOB = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5, first_bin_left_boundary=0)
+    RANGE_MASK = np.bitwise_and(MOB.array_of_bin_boundary[:, 1] >= 0,
+                                MOB.array_of_bin_boundary[:, 1] <= 29.6)
+    WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
+    WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
+    WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
+    SIMULATION_RESOLUTION = 10
+    SIMULATION_TRACES = 6_000_000
+    SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
+
+    del wind_turbines, wind_speed, wind_speed_std
+
+
+init_setup()
+FIXED_MFR_PC = globals()['FIXED_MFR_PC']
+THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']
+MOB = globals()['MOB']
+RANGE_MASK = globals()['RANGE_MASK']
+WIND_SPEED_RANGE = globals()['WIND_SPEED_RANGE']
+WIND_SPEED_STD_RANGE = globals()['WIND_SPEED_STD_RANGE']
+WIND_SPEED_STD_UCT = globals()['WIND_SPEED_STD_UCT']
+SIMULATION_RESOLUTION = globals()['SIMULATION_RESOLUTION']
+SIMULATION_TRACES = globals()['SIMULATION_TRACES']
+SIMULATION_RETURN_PERCENTILES = globals()['SIMULATION_RETURN_PERCENTILES']
 
 
 def plot_raw_wind_turbine_data(_ax=None):
@@ -390,7 +413,7 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
     wind_speed_std_range = MOB.cal_mob_statistic_eg_quantile(_this_prod[1])[RANGE_MASK, 1]
 
     @load_exist_pkl_file_otherwise_run_and_save(
-        Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/'
+        Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/{THIS_WIND_TURBINE.obj_name}/'
                               f'mine_rho_{_this_prod[0]}_std_{_this_prod[1]}.pkl')
     def get_results():
         # Initialise Wind instance
@@ -513,16 +536,16 @@ def demonstration_iec_standard():
     # return plot_mfr_pc(_ax)
 
 
-if __name__ == "__main__":
+def all_combinations_check():
     # %% 无聊的各种排列组合
-    air_density_list = ('0.97', '1.12', '1.27')
-    ws_std_list = ([UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0] / 100],
-                   'mean',
-                   [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] / 100])
+    # air_density_list = ('0.97', '1.12', '1.27')
+    # ws_std_list = ([UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0] / 100],
+    #                'mean',
+    #                [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] / 100])
+    air_density_list = ('0.97', '1.27')
+    ws_std_list = (['mean'])
     prod = list(product(air_density_list, ws_std_list))
     for i, this_prod in enumerate(prod):
-        if i != 7:
-            continue
         fig, ax_mine_new = plt.subplots(figsize=(5, 5 * 0.618), constrained_layout=True)
 
         ax_mine_new = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(this_prod,
@@ -543,9 +566,52 @@ if __name__ == "__main__":
         ax_in.get_legend().remove()
         ax_mine_new.indicate_inset_zoom(ax_in)
 
-    #     # ax_mine_old = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old()
-    #     # ax_sasa = sasa_algorithm_to_cal_possible_pout_range()
-    #     # ax_sasa_pmaps = sasa_pmaps_to_cal_possible_pout_range()
-    #     # ax_iec_standard = demonstration_iec_standard()
-    ax_std = plot_wind_speed_std()
-    # ax_sasa_high_resol = sasa_high_resol_check()
+
+def sasa_combine_upper_and_lower(plot: bool = False, wind_turbine_obj=None) -> UncertaintyDataFrame:
+    lower_prod = ['0.97', 'mean']
+    upper_prod = ['1.27', 'mean']
+    if wind_turbine_obj is None:
+        wind_turbine_obj = THIS_WIND_TURBINE
+    lower_uct = load_pkl_file(Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/'
+                                                    f'{wind_turbine_obj.obj_name}/'
+                                                    f'mine_rho_{lower_prod[0]}_std_{lower_prod[1]}.pkl')
+    upper_uct = load_pkl_file(Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/'
+                                                    f'{wind_turbine_obj.obj_name}/'
+                                                    f'mine_rho_{upper_prod[0]}_std_{upper_prod[1]}.pkl')
+    lower_uct = UncertaintyDataFrame(lower_uct)
+    upper_uct = UncertaintyDataFrame(upper_uct)
+
+    combined = UncertaintyDataFrame(index=StrOneDimensionNdarray(['0', '50', '100', 'mean', 'std.']),
+                                    columns=lower_uct.columns)
+    try:
+        combined.iloc[0] = lower_uct(by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0])
+    except ValueError:
+        combined.iloc[0] = lower_uct.iloc[0]
+    combined.iloc[1] = (lower_uct(by_percentile=50) + upper_uct(by_percentile=50)) / 2
+    combined.iloc[2] = upper_uct(by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1])
+    combined.loc['mean'] = (lower_uct.loc['mean'] + upper_uct.loc['mean']) / 2
+
+    if plot:
+        _ax = plot_from_uncertainty_like_dataframe(
+            WIND_SPEED_RANGE,
+            combined,
+            StrOneDimensionNdarray(["0.0"]),
+            facecolor='royalblue',
+            alpha=0.5,
+            **WS_POUT_2D_PLOT_KWARGS
+        )
+
+        _ax = PowerCurveByMfr('0.97').plot(**MFR_KWARGS[0], mode='discrete', ax=_ax)
+        _ax = PowerCurveByMfr('1.12').plot(**MFR_KWARGS[1], mode='discrete', ax=_ax)
+        _ax = PowerCurveByMfr('1.27').plot(**MFR_KWARGS[2], mode='discrete', ax=_ax)
+    return combined
+
+
+if __name__ == "__main__":
+    cc = sasa_combine_upper_and_lower()
+
+    # %% Draft codes
+    # for j in set(range(6)) - {1}:
+    #     init_setup(j)
+    #     print(THIS_WIND_TURBINE.obj_name)
+    #     all_combinations_check()

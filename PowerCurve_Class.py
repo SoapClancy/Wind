@@ -508,7 +508,7 @@ class PowerCurveFittedBy8PLF(PowerCurveByMethodOfBins):
                 ('g_1', [float_eps, 1.]),
                 ('b_2', [0., 60.]),
                 ('c_2', [20., 30.]),
-                ('g_2', [float_eps, 1.]),
+                ('g_2', [float_eps, 10]),
             ]
         )
         constraints = OrderedDict([(this_param, constraints.get(this_param)) for this_param in self.ordered_params])
