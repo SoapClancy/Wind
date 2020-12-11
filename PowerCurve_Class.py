@@ -152,6 +152,19 @@ class PowerCurveByMfr(PowerCurve):
         self.linestyle = linestyle
 
     @classmethod
+    def init_from_custom_wind_speed_and_power_data_sheet(cls, *,
+                                                         ws: ndarray, power: ndarray, **kwargs) -> PowerCurveByMfr:
+        intermittent_obj = cls.__new__(cls)
+        intermittent_obj.mfr_ws = ws
+        intermittent_obj.mfr_p = power
+        intermittent_obj.air_density = "None"
+        intermittent_obj.label = kwargs.get("label", "Custom PC")
+        intermittent_obj.color = kwargs.get("color", (0.64, 0.08, 0.18))
+        intermittent_obj.linestyle = kwargs.get("linestyle", '-.')
+        intermittent_obj.rated_active_power_output = kwargs.get("rated_active_power_output", 3000)
+        return intermittent_obj
+
+    @classmethod
     def init_multiple_instances(cls, air_density: ndarray, **kwargs) -> tuple:
         """
         Initialise multiple PowerCurveByMfr instances，

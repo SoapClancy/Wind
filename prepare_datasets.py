@@ -19,16 +19,47 @@ from typing import Tuple
 from collections import OrderedDict
 import getpass
 from functools import reduce
+from Ploting.data_availability_plot_Func import data_availability_plot
+from Ploting.wind_rose_plot_Func import wind_rose_plot
+import copy
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\\" + getpass.getuser() + r"\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
+Croatia_WF_LOCATION_MAPPER = {
+    'Benkovac': (44.085, 15.608, 274.0),
+    'Bruska': (44.093, 15.736, 612.4),
+    'Jelinak': (43.554, 16.167, 536.7),
+    'Katuni': (43.474, 16.900, 414.8),
+    'Lukovac': (43.535, 16.911, 640.4),
+    'Ogorje': (43.721, 16.518, 848.5),
+    'Pometenobrdo': (43.614, 16.474, 601.9),
+    'Ponikve': (42.867, 17.606, 436.2),
+    'Rudine': (42.824, 17.796, 335.6),
+    'VelikaGlava': (43.739, 16.086, 453.2),
+    'VelikaPopina': (44.270, 16.010, 919.0),
+    'Vratarusa': (45.050, 14.930, 700.0),
+    'Zelengrad': (44.125, 15.738, 484.6),
+}
 
-
+this_wind_farm_name = 'Zelengrad'
+ws_pout_only = False
+# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True) -> OrderedDict:
     wind_farm = OrderedDict()
     # WF rated power mapper
     wf_rated_power_mapper = {
+        'Benkovac': 9.2,
+        'Bruska': 36.8,
+        'Jelinak': 30,
+        'Katuni': 34.2,
+        'Lukovac': 48.75,
+        'Ogorje': 42,
+        'Pometenobrdo': 17.5,  # ###########please check
+        'Ponikve': 36.8,  # ###########please check
+        'Rudine': 34.2,
+        'VelikaGlava': 43.7,
+        'VelikaPopina': 9.2,
+        'Vratarusa': 42,
         'Zelengrad': 42,
-        'Vratarusa': 42
     }
 
     for dir_name, subdir_list, file_list in os.walk(Croatia_RAW_DATA_PATH):
@@ -41,24 +72,29 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
 
         wind_farm_name = Path(dir_name).name  # type: str
 
-        # if try_to_find_file(''.join((wind_farm_name, '.png'))):
-        #     continue
 
-        def one_variable_reading(file_postfix: str):
-            one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)))
+        def one_variable_reading(file_postfix: str, col_name: str = None):
+            file_path = Path(dir_name) / ''.join((wind_farm_name, file_postfix))
+            if try_to_find_file(file_path):
+                one_variable = pd.read_csv(file_path)
+                one_variable.index = pd.DatetimeIndex(
+                    pd.to_datetime(
+                        one_variable.iloc[:, 1],
+                        # format='%Y-%m-%d %H:%M:%S'
+                    )
+                )
+                one_variable.drop(one_variable.columns[[0, 1]], axis=1, inplace=True)
+            else:
+                one_variable = pd.DataFrame(index=wind_farm_wind_speed.index,
+                                            columns=[col_name],
+                                            dtype=float)
             # try:
             #     one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)))
             # except UnicodeDecodeError:
             #     one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)), engine='python')
 
-            one_variable.index = pd.DatetimeIndex(
-                pd.to_datetime(
-                    one_variable.iloc[:, 1],
-                    # format='%Y-%m-%d %H:%M:%S'
-                )
-            )
-            one_variable.drop(one_variable.columns[[0, 1]], axis=1, inplace=True)
             return one_variable
+
 
         wind_farm_wind_speed = one_variable_reading('_scada_ws.csv')
         wind_farm_power_output = one_variable_reading('_scada_pow.csv')
@@ -72,29 +108,19 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
                                    right_index=True)
         rename_mapper = {'WS': 'wind speed',
                          'POWER': 'active power output'}
-        wind_farm_press = wind_farm_temp = wind_farm_wd = None
         if not ws_pout_only:
-            try:
-                wind_farm_wd = one_variable_reading('_scada_wd.csv')
-                print(f"{wind_farm_name} WD {wind_farm_wd.index[0]} to {wind_farm_wd.index[-1]}")
-            except Exception:
-                print(f"unknown {wind_farm_name} WD")
-                continue
-            try:
-                wind_farm_temp = one_variable_reading('_scada_temp.csv')
-                print(f"{wind_farm_name} TEMP {wind_farm_temp.index[0]} to {wind_farm_temp.index[-1]}")
-            except Exception:
-                print(f"unknown {wind_farm_name} TEMP")
-                continue
-            try:
-                wind_farm_press = one_variable_reading('_scada_press.csv')
-                print(f"{wind_farm_name} PRES {wind_farm_press.index[0]} to {wind_farm_press.index[-1]}")
-            except Exception:
-                print(f"unknown {wind_farm_name} PRES")
-                continue
+            wind_farm_wd = one_variable_reading('_scada_wd.csv', 'WD')
+            print(f"{wind_farm_name} WD {wind_farm_wd.index[0]} to {wind_farm_wd.index[-1]}")
+
+            wind_farm_temp = one_variable_reading('_scada_temp.csv', 'TEMP')
+            print(f"{wind_farm_name} TEMP {wind_farm_temp.index[0]} to {wind_farm_temp.index[-1]}")
+
+            wind_farm_press = one_variable_reading('_scada_press.csv', 'PRESS')
+            print(f"{wind_farm_name} PRES {wind_farm_press.index[0]} to {wind_farm_press.index[-1]}")
+
             wind_farm_basic = reduce(lambda a, b: pd.merge(a,
                                                            b,
-                                                           how='left',
+                                                           how='outer',
                                                            left_index=True,
                                                            right_index=True),
                                      [wind_farm_basic, wind_farm_press, wind_farm_temp, wind_farm_wd])
@@ -117,15 +143,54 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
             dependant_names=('active power output',)
         )
 
-        # scatter(wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 0].values,
-        #         wind_farm_basic.iloc[365 * 24 * 30:365 * 24 * 90, 1].values / 42,
-        #         color='b',
-        #         x_label='Wind speed (m/s)',
-        #         x_lim=(-0.05, 28.5),
-        #         y_lim=(-0.005, 1.05),
-        #         y_label='Power output (p.u.)',
-        #         save_file_=wind_farm_name)
+        this_wind_farm = wind_farm[wind_farm_name]
+        # %% Zelengrad strange part analysis mask
+        this_wind_farm = this_wind_farm[np.bitwise_and(
+            this_wind_farm.index >= datetime.datetime(year=2014, month=1, day=1),
+            this_wind_farm.index < datetime.datetime(year=2015, month=1, day=1)
+        )]
+        # %% Data availability plot
+        # availability_ax = data_availability_plot(this_wind_farm,
+        #                                          name_mapper={'wind speed': 'WS',
+        #                                                       'active power output': 'P' + r'$\mathrm{_{out}}$',
+        #                                                       'pressure': 'PRESS',
+        #                                                       'temperature': 'TEMP',
+        #                                                       'wind direction': 'WD'}, )
+        # availability_ax.xaxis.set_major_formatter(mdates.DateFormatter("%y-%m"))
+
+        # %% WD rose plot
+        # if wind_farm_name in ('Bruska', 'Zelengrad'):
+        #     ws = this_wind_farm['wind speed'].values
+        #     wd = this_wind_farm['wind direction'].values
+            # wind_rose_plot(ws, wd)
+            # n = 8
+            # wd_range_mask = [
+            #     np.bitwise_and(wd >= i * 90 / n, wd < (i + 1) * 90 / n) for i in range(n)
+            # ]
+            # for range_i, this_mask in enumerate(wd_range_mask):
+            #     scatter(ws[this_mask],
+            #             this_wind_farm['active power output'].values[this_mask] / wf_rated_power_mapper[wind_farm_name],
+            #             color='royalblue',
+            #             x_label='Wind Speed [m/s]',
+            #             x_lim=(-0.5, 33.5),
+            #             y_lim=(-0.05, 1.05),
+            #             y_label='Power Output [p.u.]',
+            #             save_file_=wind_farm_name + f"_{range_i}", save_format='svg')
+
+        # %% Pout-WS scatter plot
+        # scatter(this_wind_farm.iloc[:, 0].values,
+        #         this_wind_farm.iloc[:, 1].values,
+        #         color='royalblue',
+        #         x_label='Wind Speed [m/s]',
+        #         x_lim=(-0.5, 33.5),
+        #         y_lim=(-0.05 * this_wind_farm.rated_active_power_output, 1.05 * this_wind_farm.rated_active_power_output),
+        #         y_label='Power Output [MW]',
+        #         save_file_=wind_farm_name, save_format='svg')
         return wind_farm
+
+# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+# return_val = wind_farm[wind_farm_name]
+# return_val_df = return_val.pd_view()
 
 
 def convert_datetime_str_in_txt_to_datetime64(ts: ndarray, from_: str = 'txt'):
@@ -280,7 +345,8 @@ if __name__ == '__main__':
     #             run_n_times=5)
     # test_pc.plot()
 
-    tt = load_croatia_data(ws_pout_only=False)
+    pass
+    # tt = load_croatia_data(this_wind_farm_name='Benkovac', ws_pout_only=False)
     # tt = load_raw_wt_from_txt_file_and_temperature_from_csv()
 
     # for i in tt:

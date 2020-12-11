@@ -1,4 +1,4 @@
-from PowerCurve_Class import PowerCurveByMfr
+from PowerCurve_Class import PowerCurveByMfr, PowerCurveFittedBy8PLF
 import pandas as pd
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv, \
     load_high_resol_for_averaging_effects_analysis
@@ -7,8 +7,7 @@ from Ploting.fast_plot_Func import *
 from Wind_Class import Wind
 from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, IntOneDimensionNdarray
-from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, load_pkl_file, \
-    load_exist_npy_file_otherwise_run_and_save
+from File_Management.load_save_Func import *
 from project_utils import *
 from pathlib import Path
 from Data_Preprocessing.float_precision_control_Func import \
@@ -29,6 +28,7 @@ from functools import reduce
 from tqdm import tqdm
 import copy
 import matplotlib.pyplot as plt
+from WT_WF_Class import WT
 
 
 # %% Global variables
@@ -66,7 +66,7 @@ def init_setup(wind_turbine_index: int = 1):
 
 init_setup()
 FIXED_MFR_PC = globals()['FIXED_MFR_PC']
-THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']
+THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']  # type: WT
 MOB = globals()['MOB']
 RANGE_MASK = globals()['RANGE_MASK']
 WIND_SPEED_RANGE = globals()['WIND_SPEED_RANGE']
@@ -408,13 +408,27 @@ def sasa_high_resol_check():
         laji_ax.legend(loc=5)
 
 
-def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_prod, **kwargs):
-    this_pc = PowerCurveByMfr(_this_prod[0])
-    wind_speed_std_range = MOB.cal_mob_statistic_eg_quantile(_this_prod[1])[RANGE_MASK, 1]
+def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_prod=None,
+                                                                         mfr_pc_obj: PowerCurveByMfr = None,
+                                                                         do_plot: bool = True,
+                                                                         **kwargs):
+    assert (_this_prod or mfr_pc_obj) is not None
+    if _this_prod is not None:
+        this_pc = PowerCurveByMfr(_this_prod[0])
+        wind_speed_std_range = MOB.cal_mob_statistic_eg_quantile(_this_prod[1])[RANGE_MASK, 1]
+        save_path = (Path(project_path_) /
+                     f'Data/Results/transient_study/Energies_Review_paper_2020/'
+                     f'{THIS_WIND_TURBINE.obj_name}/mine_rho_{_this_prod[0]}_std_{_this_prod[1]}.pkl')
+    else:
+        this_pc = mfr_pc_obj
+        temp_para = 'mean'
+        wind_speed_std_range = MOB.cal_mob_statistic_eg_quantile(temp_para)[RANGE_MASK, 1]
 
-    @load_exist_pkl_file_otherwise_run_and_save(
-        Path(project_path_) / f'Data/Results/transient_study/Energies_Review_paper_2020/{THIS_WIND_TURBINE.obj_name}/'
-                              f'mine_rho_{_this_prod[0]}_std_{_this_prod[1]}.pkl')
+        save_path = (Path(project_path_) /
+                     f'Data/Results/transient_study/Energies_Review_paper_2020/'
+                     f'{THIS_WIND_TURBINE.obj_name}/simulation_using_fitted_pc_sasa.pkl')
+
+    @load_exist_pkl_file_otherwise_run_and_save(save_path)
     def get_results():
         # Initialise Wind instance
         _simulated_pout = []
@@ -444,8 +458,10 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
         return _simulated_pout
 
     simulated_pout = get_results()  # type: UncertaintyDataFrame
-
-    return uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc, **kwargs)
+    if do_plot:
+        return uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc, **kwargs)
+    else:
+        return UncertaintyDataFrame(simulated_pout)
 
 
 def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_old():
@@ -607,8 +623,36 @@ def sasa_combine_upper_and_lower(plot: bool = False, wind_turbine_obj=None) -> U
     return combined
 
 
+def sasa_using_fitted_pc_to_simulate(wind_turbine_obj=None):
+    if wind_turbine_obj is None:
+        wind_turbine_obj = THIS_WIND_TURBINE
+    pc_fitting_results = load_pkl_file(wind_turbine_obj.default_results_saving_path["power curve"])
+    fitted_pc_obj = PowerCurveFittedBy8PLF(interp_for_high_resol=False)
+    fitted_pc_obj.update_params(*pc_fitting_results[-1]['variable'])
+    intermittent_obj = PowerCurveByMfr.init_from_custom_wind_speed_and_power_data_sheet(
+        ws=np.arange(-1, 100, 1),
+        power=fitted_pc_obj(np.arange(-1, 100, 1))
+    )
+    uct = demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(mfr_pc_obj=intermittent_obj,
+                                                                               do_plot=False)
+
+    _ax = plot_from_uncertainty_like_dataframe(
+        WIND_SPEED_RANGE,
+        uct,
+        StrOneDimensionNdarray([str(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0])]),
+        facecolor='royalblue',
+        alpha=0.5,
+        **WS_POUT_2D_PLOT_KWARGS
+    )
+
+    _ax = PowerCurveByMfr('0.97').plot(**MFR_KWARGS[0], mode='discrete', ax=_ax)
+    _ax = PowerCurveByMfr('1.12').plot(**MFR_KWARGS[1], mode='discrete', ax=_ax)
+    _ax = PowerCurveByMfr('1.27').plot(**MFR_KWARGS[2], mode='discrete', ax=_ax)
+
+
 if __name__ == "__main__":
-    cc = sasa_combine_upper_and_lower()
+    # cc = sasa_combine_upper_and_lower()
+    sasa_using_fitted_pc_to_simulate()
 
     # %% Draft codes
     # for j in set(range(6)) - {1}:
