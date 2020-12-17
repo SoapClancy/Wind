@@ -106,6 +106,30 @@ class WTandWFBase(PhysicalInstanceDataFrame):
             )
         return ax
 
+    def twin_time_series_plot(self, *, time_window_mask: Sequence[bool],
+                              x_axis_format: str = '%H',
+                              x_label: str = 'Time of a Day [Hour]',
+                              wind_speed_y_lim=(-0.05, 27.55),
+                              power_output_y_lim=WS_POUT_2D_PLOT_KWARGS['y_lim']):
+
+        time_x = self.index[time_window_mask]
+        ax = series(x=time_x, y=self.loc[time_window_mask, 'wind speed'].values, figure_size=(5, 3.3 * 0.618),
+                    x_axis_format=x_axis_format, x_label=x_label,
+                    marker='*', markersize=6, color='royalblue', linestyle='-',
+                    y_lim=wind_speed_y_lim, y_label='Wind Speed [m/s]', label='Wind speed')
+
+        ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
+        ax2.set_ylabel('Active Power Output [p.u.]', fontdict={'size': 10})  # we already handled the x-label with ax1
+        series(x=time_x, y=self.loc[time_window_mask, 'active power output'].values, ax=ax2,
+               x_axis_format=x_axis_format, marker='o', markersize=3, color='green', linestyle='--',
+               y_lim=power_output_y_lim, label='Power output')
+        plt.grid(False)
+        # ask matplotlib for the plotted objects and their labels
+        lines, labels = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax2.legend(lines + lines2, labels + labels2, loc=0, prop={'size': 10})
+        return ax, ax2
+
     def update_air_density_to_last_column(self):
         if 'air density' in self.columns:
             return self['air density'].values
@@ -136,13 +160,12 @@ class WT(WTandWFBase):
     @property
     def outlier_name_mapper(self) -> DataCategoryNameMapper:
         meta = [["missing data", "missing", -1, "N/A"],
-                ["others", "others", 0, "N/A"],
+                ["Normal data", "normal", 0, "the recordings that can be captured by the simulation"],
                 ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
                 ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
                 ["Low maximum Pout", "CAT-II", 3, "curtailment"],
                 ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
-                ["Scattered", "CAT-IV.a", 5, "averaging window or WT cut-out effects"],
-                ["Scattered", "CAT-IV.b", 6, "the others"]]
+                ["Scattered", "CAT-IV", 5, "averaging window or WT cut-out effects"]]
 
         mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
         mapper[:] = meta
