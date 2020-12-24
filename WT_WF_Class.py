@@ -40,6 +40,7 @@ from parse import parse
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from HighDimensionalAnalysis_Class import OneDimensionBinnedData
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
@@ -138,7 +139,8 @@ class WTandWFBase(PhysicalInstanceDataFrame):
             air_density = cal_air_density(celsius_to_kelvin(self['environmental temperature'].values),
                                           self['relative humidity'].values / 100,
                                           self['barometric pressure'].values * 100)
-            self['air density'] = air_density
+
+            self.insert(self.shape[1], column='air density', value=air_density)
             return air_density
 
 
@@ -165,20 +167,21 @@ class WT(WTandWFBase):
                 ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
                 ["Low maximum Pout", "CAT-II", 3, "curtailment"],
                 ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
-                ["Scattered", "CAT-IV", 5, "averaging window or WT cut-out effects"]]
+                ["Scattered", "CAT-IV", 5, "the recordings rejected by the simulation"]]
 
         mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
         mapper[:] = meta
         return mapper
 
-    def outlier_detector(self, how_to_detect_scattered: str = 'isolation forest', *,
+    def outlier_detector(self, how_to_detect_scattered: str = 'sim', *,
                          save_file_path: Path = None,
-                         sasa_combine_uct: UncertaintyDataFrame = None) -> DataCategoryData:
-        assert (how_to_detect_scattered in ('isolation forest', 'hist')), "Check 'how_to_detect_scattered'"
+                         prior_sim_knowledge_path: Path = None) -> DataCategoryData:
+        assert (how_to_detect_scattered in ('isolation forest', 'hist', 'sim')), "Check 'how_to_detect_scattered'"
         save_file_path = save_file_path or self.default_results_saving_path["outlier"]
         if try_to_find_file(save_file_path):
-            warnings.warn(f"{self.__str__()} has results in {save_file_path}")
+            warnings.warn(f"{self.__str__()} has results in {save_file_path}, so return to the existing file")
             return load_pkl_file(save_file_path)['DataCategoryData obj']
+        assert (prior_sim_knowledge_path is not None)
         # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
         outlier = super().outlier_detector()  # type: DataCategoryData
         # %% CAT-I
@@ -213,124 +216,243 @@ class WT(WTandWFBase):
         del cat_iii_outlier_mask
         # %% CAT-IV
         from Wind_Class import Wind
-        # Get a Callable that can calculates the 10s to 10s wind speed variation sigma
         sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol()
-        current_others_index = np.argwhere(outlier('others')).flatten()
+        # Get a Callable that can calculates the 10s to 10s wind speed variation sigma
         if how_to_detect_scattered == 'hist':
+            current_others_index = np.argwhere(outlier('others')).flatten()
             cat_iv_outlier_mask = BivariateOutlier(
                 predictor_var=self.iloc[current_others_index]['wind speed'].values,
                 dependent_var=self.iloc[current_others_index]['active power output'].values,
                 bin_step=0.5
             ).identify_interquartile_outliers_based_on_method_of_bins()
-        else:
+            outlier.abbreviation[current_others_index[cat_iv_outlier_mask]] = "CAT-IV"
+        elif how_to_detect_scattered == 'isolation forest':
+            current_others_index = np.argwhere(outlier('others')).flatten()
             current_normal_data = StandardScaler().fit_transform(self.concerned_data().iloc[current_others_index])
             cat_iv_outlier_mask = use_isolation_forest(current_normal_data)
+            outlier.abbreviation[current_others_index[cat_iv_outlier_mask]] = "CAT-IV"
             del current_normal_data
-
-        outlier.abbreviation[current_others_index[cat_iv_outlier_mask]] = "CAT-IV"
-        del current_others_index, cat_iv_outlier_mask
-        # %% CAT-IV.a and CAT-IV.b
-        outlier.abbreviation[np.all((
-            (
-                outlier("CAT-IV"),
-                self['active power output'] >= PowerCurveByMfr.init_all_instances_in_docs()[0](self['wind speed']),
-                self['active power output'] <= PowerCurveByMfr.init_all_instances_in_docs()[-1](self['wind speed'])
-            )
-        ), axis=0)] = "CAT-IV.a"
-        if sasa_combine_uct is None:
-            # draft analysis for separating CAT-IV.a and CAT-IV.b
-
-            outlier.abbreviation[np.bitwise_and(outlier("CAT-IV"),
-                                                np.isnan(self['wind speed std.']))] = "CAT-IV.b"
-            # Make sure there are air density recordings
-            self.update_air_density_to_last_column()
-            current_cat_iv_data = self[['wind speed',
-                                        'wind speed std.',
-                                        'active power output',
-                                        'air density']][outlier('CAT-IV')]
-            current_cat_iv_data['Mfr PC obj'] = PowerCurveByMfr.init_multiple_instances(
-                air_density=current_cat_iv_data['air density'].values)
-            # To find the recordings with same wind speed, wind speed std., and air density. This will increase the
-            # computation efficiency in further simulation
-            unique_rows, unique_label = current_cat_iv_data.unique(['wind speed', 'wind speed std.', 'Mfr PC obj'])
-            # Use the buffer
-            buffer = try_to_find_file(save_file_path.parent / 'temp.pkl')
-            if buffer:
-                buffer = load_pkl_file(save_file_path.parent / 'temp.pkl')
-                cat_iv_a_outlier_index = buffer['cat_iv_a_outlier_index']
-                cat_iv_b_outlier_index = buffer['cat_iv_b_outlier_index']
-                pout_uncertainty_list = buffer['pout_uncertainty_list']
-            else:
-                cat_iv_a_outlier_index, cat_iv_b_outlier_index, pout_uncertainty_list = [], [], []
-            # Do the simulation (ONLY in unique_rows)
-            for i in tqdm(range(unique_rows.shape[0])):
-                # Use the buffer
-                if buffer:
-                    if i <= buffer['i']:
-                        continue
-
-                this_unique_row = unique_rows.iloc[i]
-                # prepare high resolution wind
-                wind = Wind(this_unique_row['wind speed'], this_unique_row['wind speed std.'])
-                high_resol_wind = wind.simulate_transient_wind_speed_time_series(
-                    resolution=10,
-                    traces_number_for_each_recording=1_000_000,
-                    sigma_func=sigma_func
-                )
-                # prepare mfr pc
-                this_unique_mfr_pc = this_unique_row['Mfr PC obj']
-                this_pout_uncertainty = this_unique_mfr_pc.cal_with_hysteresis_control_using_high_resol_wind(
-                    high_resol_wind,
-                    return_percentiles=UncertaintyDataFrame.init_from_template(
-                        columns_number=len(high_resol_wind),
-                        percentiles=None),
-                )
-                pout_uncertainty_list.append(this_pout_uncertainty)
-                # Compare to judge. Note that this is a kind of inverse of unique
-                pout_actual = current_cat_iv_data[unique_label == i]
-                for j in range(pout_actual.shape[0]):
-                    this_pout_actual = pout_actual['active power output'].iloc[j] / self.rated_active_power_output
-                    if all((this_pout_actual >= pout_uncertainty_list[i].loc['1.5_Sigma_low', 0],
-                            this_pout_actual <= pout_uncertainty_list[i].loc['1.5_Sigma_high', 0])):
-                        cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
-                    elif all((this_pout_actual >= pout_uncertainty_list[i].loc['1.5_Sigma_low', 0],
-                              this_pout_actual <= float(this_unique_mfr_pc(this_unique_row['wind speed'])))):
-                        cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
-                    else:
-                        cat_iv_b_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
-                # Save progress
-                if (i % 25) == 0:
-                    save_pkl_file(save_file_path.parent / 'temp.pkl',
-                                  {"i": i,
-                                   "outlier": outlier,
-                                   "cat_iv_a_outlier_index": cat_iv_a_outlier_index,
-                                   "cat_iv_b_outlier_index": cat_iv_b_outlier_index,
-                                   "pout_uncertainty_list": pout_uncertainty_list})
-            outlier.abbreviation[self.index.isin(cat_iv_a_outlier_index)] = "CAT-IV.a"
-            outlier.abbreviation[self.index.isin(cat_iv_b_outlier_index)] = "CAT-IV.b"
-        # sasa method, not mine
+        # The follows is the key contribution, which is the implementation of the proposed simulation
         else:
-            ws = self['wind speed'].values
-            pout = self['active power output'].values / self.rated_active_power_output
-            ws[np.bitwise_or(ws < float(sasa_combine_uct.columns[0]),
-                             ws > float(sasa_combine_uct.columns[-1]))] = np.nan
-            above_mask = pout >= interp1d(sasa_combine_uct.columns.values.astype(float),
-                                          sasa_combine_uct.iloc[0].astype(float))(ws)
-            below_mask = pout <= interp1d(sasa_combine_uct.columns.values.astype(float),
-                                          sasa_combine_uct.iloc[2].astype(float))(ws)
-            sasa_believe_not_outlier = np.bitwise_and(above_mask, below_mask)
-            outlier.abbreviation[np.bitwise_and(outlier('CAT-IV'), sasa_believe_not_outlier)] = "CAT-IV.a"
-            outlier.abbreviation[outlier('CAT-IV')] = "CAT-IV.b"
+            # %% The region inside mfr PC range must be normal, which is due to air density variation!
+            low_mfr_pc = PowerCurveByMfr.init_all_instances_in_docs()[0]
+            high_mfr_pc = PowerCurveByMfr.init_all_instances_in_docs()[-1]
+            outlier.abbreviation[np.all((
+                (
+                    outlier(['CAT-I', 'others']),
+                    self['active power output'] >= low_mfr_pc(self['wind speed']) * self.rated_active_power_output,
+                    self['active power output'] <= high_mfr_pc(self['wind speed']) * self.rated_active_power_output
+                )
+            ), axis=0)] = "normal"
 
-        # %% CAT-I.a and CAT-I.b
-        cat_iv_a_outlier_index = self.index[outlier("CAT-IV.a")]
-        for i in range(cat_iv_a_outlier_index.shape[0] - 1):
-            this_window_mask = np.bitwise_and(self.index > cat_iv_a_outlier_index[i],
-                                              self.index < cat_iv_a_outlier_index[i + 1])
-            if all((np.unique(outlier.abbreviation[this_window_mask]).shape[0] == 1,
-                    "CAT-I" in outlier.abbreviation[this_window_mask])):
-                outlier.abbreviation[this_window_mask] = "CAT-I.a"
-        outlier.abbreviation[outlier("CAT-I")] = "CAT-I.b"
+            to_be_simulated_mask = outlier(['CAT-I', 'others'])
+            try_to_find_folder_path_otherwise_make_one(prior_sim_knowledge_path.parent)
+            prior_sim_knowledge = load_pkl_file(prior_sim_knowledge_path)  # type:Union[pd.DataFrame, None]
+            level_0_name = "wind speed"
+            level_1_name = "wind speed std."
+            level_2_name = "air density"
+            # Basic information needed for prior_sim_knowledge and the simulation
+            ws_std_resol = 0.1
+            ws_binned_data_obj = OneDimensionBinnedData(self[level_0_name][to_be_simulated_mask].values,
+                                                        bin_step=0.5, first_bin_left_boundary=0)
+            # Note, ws_std_resol in the actual recording is only 0.1! So, if first_bin_left_boundary here is 0,
+            # and medium point of WS std. bin is used to simulate the wind, the results will always overestimate variety
+            ws_std_binned_data_obj = OneDimensionBinnedData(self[level_1_name][to_be_simulated_mask].values,
+                                                            bin_step=ws_std_resol,
+                                                            first_bin_left_boundary=-ws_std_resol / 2)
+            mfr_pc_densities = PowerCurveByMfr.air_density_in_docs()
+            uncertainty_data_frame_template_obj = UncertaintyDataFrame.init_from_template(1)
+            prior_sim_knowledge_columns = uncertainty_data_frame_template_obj.index
+
+            # prior_sim_knowledge should be initialised if not existing
+            if prior_sim_knowledge is None:
+                prior_sim_knowledge = pd.DataFrame(
+                    columns=prior_sim_knowledge_columns,
+                    index=pd.MultiIndex.from_tuples(
+                        ((str(ws_binned_data_obj.bin[0]), str(ws_std_binned_data_obj.bin[0]), mfr_pc_densities[0]),),
+                        names=(level_0_name, level_1_name, level_2_name)
+                    ),
+                    dtype=float
+                )
+
+            # Iterate over the recordings that are to be checked (to_be_simulated_mask)
+            mfr_pc_obj = PowerCurveByMfr(mfr_pc_densities[0])
+            any_update_flag = False
+            self.update_air_density_to_last_column()
+            for i, this_recording in tqdm(enumerate(self[to_be_simulated_mask].iterrows())):
+                this_recording_index = this_recording[0]
+                this_recording_ws = this_recording[1]['wind speed']
+                this_recording_ws_std = this_recording[1]['wind speed std.']
+                this_recording_air_density = this_recording[1]['air density']
+
+                this_recording_ws_bin = ws_binned_data_obj(this_recording_ws)
+                this_recording_ws_std_bin = ws_std_binned_data_obj(this_recording_ws_std)
+                this_multi_index_obj = pd.MultiIndex.from_tuples(
+                    ((str(this_recording_ws_bin), str(this_recording_ws_std_bin), mfr_pc_densities[0]),),
+                    names=(level_0_name, level_1_name, level_2_name)
+                )
+                not_existing_flag = np.sum(this_multi_index_obj.isin(prior_sim_knowledge.index)) == 0
+                existing_but_nan_flag = False
+                if np.sum(this_multi_index_obj.isin(prior_sim_knowledge.index)) != 0:
+                    existing_but_nan_flag = np.any(
+                        np.isnan(prior_sim_knowledge.loc[this_multi_index_obj[0]].values)
+                    )
+                # If it does not have index for current WS and WS std.
+                if not_existing_flag or existing_but_nan_flag:
+                    any_update_flag = True
+                    # Firstly, create current_sim_knowledge based on current key
+                    current_sim_knowledge = pd.DataFrame(
+                        columns=prior_sim_knowledge_columns,
+                        index=this_multi_index_obj,
+                        dtype=float
+                    )
+                    # Secondly, simulate (using mfr_pc_densities[0])
+                    # prepare high resolution wind, using medium point of WS bin and WS std. bin
+                    wind = Wind(this_recording_ws_bin[1], this_recording_ws_std_bin[1])
+                    high_resol_wind = wind.simulate_transient_wind_speed_time_series(
+                        resolution=10,
+                        traces_number_for_each_recording=1_000_000,
+                        sigma_func=sigma_func
+                    )
+                    # prepare mfr pc
+                    this_pout_uncertainty = mfr_pc_obj.cal_with_hysteresis_control_using_high_resol_wind(
+                        high_resol_wind,
+                        return_percentiles=uncertainty_data_frame_template_obj
+                    )
+                    # Finally, update the value,
+                    current_sim_knowledge.iloc[0] = this_pout_uncertainty.values.flatten()
+                    if not_existing_flag:
+                        prior_sim_knowledge = pd.concat((prior_sim_knowledge, current_sim_knowledge))
+                    else:
+                        prior_sim_knowledge.loc[this_multi_index_obj[0]] = this_pout_uncertainty.values.flatten()
+
+                    # For every 1000 updates, also save and update prior_sim_knowledge in the disk
+                    if i % 50 == 0:
+                        prior_sim_knowledge = prior_sim_knowledge.sort_index()
+                        save_pkl_file(prior_sim_knowledge_path, prior_sim_knowledge)
+
+                # Check the table again, which now should have the value for current WS and WS std.
+                this_recording_sim = prior_sim_knowledge.loc[this_multi_index_obj]
+                this_recording_sim = UncertaintyDataFrame(this_recording_sim.values.T,
+                                                          columns=(0,),
+                                                          index=this_recording_sim.columns)
+                # based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=1.5).values.flatten()
+                based_pout_sim_low, based_pout_sim_high = this_recording_sim(
+                    preserved_data_percentage=95).values.flatten()
+                # Mapping the value using the relationship among Mfr_PC_rho_x
+                new_power_output = PowerCurveByMfr.map_given_power_output_to_another_air_density(
+                    old_air_density=np.array([mfr_pc_densities[0]] * 2),
+                    new_air_density=np.array([this_recording_air_density] * 2),
+                    old_power_output=np.array([based_pout_sim_low, based_pout_sim_high]),
+                    wind_speed=np.array([this_recording_ws] * 2),
+                )
+                based_pout_sim_low, based_pout_sim_high = new_power_output
+
+                this_recording_pout = this_recording[1]['active power output'] / self.rated_active_power_output
+                if (this_recording_pout >= based_pout_sim_low) and (this_recording_pout <= based_pout_sim_high):
+                    outlier.abbreviation[outlier.index == this_recording_index] = 'normal'
+                else:
+                    if outlier.abbreviation[outlier.index == this_recording_index][0] == 'others':
+                        outlier.abbreviation[outlier.index == this_recording_index] = 'CAT-IV'
+
+            # After the iteration, if any updates happen, should save and update prior_sim_knowledge in the disk
+            if any_update_flag:
+                def prior_sim_knowledge_index_sort_key(this_index):
+                    parse_obj_level_0 = parse(r"[{} {} {}]", this_index[0])
+                    parse_obj_level_1 = parse(r"[{} {} {}]", this_index[1])
+                    level_0_val = float(parse_obj_level_0[0])
+                    level_1_val = float(parse_obj_level_1[0])
+                    return level_0_val, level_1_val
+
+                sorted_index = sorted(prior_sim_knowledge.index, key=prior_sim_knowledge_index_sort_key)
+                prior_sim_knowledge = prior_sim_knowledge.reindex(sorted_index)
+
+                save_pkl_file(prior_sim_knowledge_path, prior_sim_knowledge)
+
+            # Use it to determine whether this_recording is a CAT-IV outlier or not.
+
+        """"""
+        # outlier.abbreviation[current_others_index[cat_iv_outlier_mask]] = "CAT-IV"
+        # del current_others_index, cat_iv_outlier_mask
+        # # %% CAT-IV.a and CAT-IV.b
+        # outlier.abbreviation[np.all((
+        #     (
+        #         outlier("CAT-IV"),
+        #         self['active power output'] >= PowerCurveByMfr.init_all_instances_in_docs()[0](self['wind speed']),
+        #         self['active power output'] <= PowerCurveByMfr.init_all_instances_in_docs()[-1](self['wind speed'])
+        #     )
+        # ), axis=0)] = "CAT-IV.a"
+        # # draft analysis for separating CAT-IV.a and CAT-IV.b
+        #
+        # outlier.abbreviation[np.bitwise_and(outlier("CAT-IV"),
+        #                                     np.isnan(self['wind speed std.']))] = "CAT-IV.b"
+        # # Make sure there are air density recordings
+        # self.update_air_density_to_last_column()
+        # current_cat_iv_data = self[['wind speed',
+        #                             'wind speed std.',
+        #                             'active power output',
+        #                             'air density']][outlier('CAT-IV')]
+        # current_cat_iv_data['Mfr PC obj'] = PowerCurveByMfr.init_multiple_instances(
+        #     air_density=current_cat_iv_data['air density'].values)
+        # # To find the recordings with same wind speed, wind speed std., and air density. This will increase the
+        # # computation efficiency in further simulation
+        # unique_rows, unique_label = current_cat_iv_data.unique(['wind speed', 'wind speed std.', 'Mfr PC obj'])
+        # # Use the buffer
+        # buffer = try_to_find_file(save_file_path.parent / 'temp.pkl')
+        # if buffer:
+        #     buffer = load_pkl_file(save_file_path.parent / 'temp.pkl')
+        #     cat_iv_a_outlier_index = buffer['cat_iv_a_outlier_index']
+        #     cat_iv_b_outlier_index = buffer['cat_iv_b_outlier_index']
+        #     pout_uncertainty_list = buffer['pout_uncertainty_list']
+        # else:
+        #     cat_iv_a_outlier_index, cat_iv_b_outlier_index, pout_uncertainty_list = [], [], []
+        # # Do the simulation (ONLY in unique_rows)
+        # for i in tqdm(range(unique_rows.shape[0])):
+        #     # Use the buffer
+        #     if buffer:
+        #         if i <= buffer['i']:
+        #             continue
+        #
+        #     this_unique_row = unique_rows.iloc[i]
+        #     # prepare high resolution wind
+        #     wind = Wind(this_unique_row['wind speed'], this_unique_row['wind speed std.'])
+        #     high_resol_wind = wind.simulate_transient_wind_speed_time_series(
+        #         resolution=10,
+        #         traces_number_for_each_recording=1_000_000,
+        #         sigma_func=sigma_func
+        #     )
+        #     # prepare mfr pc
+        #     this_unique_mfr_pc = this_unique_row['Mfr PC obj']
+        #     this_pout_uncertainty = this_unique_mfr_pc.cal_with_hysteresis_control_using_high_resol_wind(
+        #         high_resol_wind,
+        #         return_percentiles=UncertaintyDataFrame.init_from_template(
+        #             columns_number=len(high_resol_wind),
+        #             percentiles=None),
+        #     )
+        #     pout_uncertainty_list.append(this_pout_uncertainty)
+        #     # Compare to judge. Note that this is a kind of inverse of unique
+        #     pout_actual = current_cat_iv_data[unique_label == i]
+        #     for j in range(pout_actual.shape[0]):
+        #         this_pout_actual = pout_actual['active power output'].iloc[j] / self.rated_active_power_output
+        #         if all((this_pout_actual >= pout_uncertainty_list[i].loc['1.5_Sigma_low', 0],
+        #                 this_pout_actual <= pout_uncertainty_list[i].loc['1.5_Sigma_high', 0])):
+        #             cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+        #         elif all((this_pout_actual >= pout_uncertainty_list[i].loc['1.5_Sigma_low', 0],
+        #                   this_pout_actual <= float(this_unique_mfr_pc(this_unique_row['wind speed'])))):
+        #             cat_iv_a_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+        #         else:
+        #             cat_iv_b_outlier_index.append(current_cat_iv_data[unique_label == i].index[j])
+        #     # Save progress
+        #     if (i % 25) == 0:
+        #         save_pkl_file(save_file_path.parent / 'temp.pkl',
+        #                       {"i": i,
+        #                        "outlier": outlier,
+        #                        "cat_iv_a_outlier_index": cat_iv_a_outlier_index,
+        #                        "cat_iv_b_outlier_index": cat_iv_b_outlier_index,
+        #                        "pout_uncertainty_list": pout_uncertainty_list})
+        # outlier.abbreviation[self.index.isin(cat_iv_a_outlier_index)] = "CAT-IV.a"
+        # outlier.abbreviation[self.index.isin(cat_iv_b_outlier_index)] = "CAT-IV.b"
+
         # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
         save_pkl_file(save_file_path,
                       {'raw_ndarray_data': np.array(outlier.abbreviation),
@@ -340,14 +462,14 @@ class WT(WTandWFBase):
 
     def outlier_plot(self, outlier: DataCategoryData = None, ax=None, *, plot_individual: bool = False, **kwargs):
         outlier = outlier or load_pkl_file(self.default_results_saving_path["outlier"])['DataCategoryData obj']
-        self["active power output"] /= self.rated_active_power_output
+        self.loc[:, "active power output"] /= self.rated_active_power_output
 
-        if sum(outlier("CAT-I.a")) > 0:
-            ax = scatter(*self[outlier("CAT-I.a")][["wind speed", "active power output"]].values.T, label="CAT-I.a",
-                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="darkorange", marker="1", s=24, zorder=8, **WS_POUT_2D_PLOT_KWARGS)
-        if sum(outlier("CAT-I.b")) > 0:
-            ax = scatter(*self[outlier("CAT-I.b")][["wind speed", "active power output"]].values.T, label="CAT-I.b",
+        # if sum(outlier("CAT-I.a")) > 0:
+        #     ax = scatter(*self[outlier("CAT-I.a")][["wind speed", "active power output"]].values.T, label="CAT-I.a",
+        #                  ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+        #                  color="darkorange", marker="1", s=24, zorder=8, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-I")) > 0:
+            ax = scatter(*self[outlier("CAT-I")][["wind speed", "active power output"]].values.T, label="CAT-I",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
                          color="fuchsia", marker="2", s=24, **WS_POUT_2D_PLOT_KWARGS)
         if sum(outlier("CAT-II")) > 0:
@@ -358,18 +480,21 @@ class WT(WTandWFBase):
             ax = scatter(*self[outlier("CAT-III")][["wind speed", "active power output"]].values.T, label="CAT-III",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
                          color="cyan", marker="+", s=24, zorder=11, **WS_POUT_2D_PLOT_KWARGS)
-        if sum(outlier("CAT-IV.a")) > 0:
-            ax = scatter(*self[outlier("CAT-IV.a")][["wind speed", "active power output"]].values.T, label="CAT-IV.a",
-                         ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="green", marker="3", s=24, zorder=9, **WS_POUT_2D_PLOT_KWARGS)
-        if sum(outlier("CAT-IV.b")) > 0:
-            ax = scatter(*self[outlier("CAT-IV.b")][["wind speed", "active power output"]].values.T, label="CAT-IV.b",
+        # if sum(outlier("CAT-IV.a")) > 0:
+        #     ax = scatter(*self[outlier("CAT-IV.a")][["wind speed", "active power output"]].values.T, label="CAT-IV.a",
+        #                  ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+        #                  color="green", marker="3", s=24, zorder=9, **WS_POUT_2D_PLOT_KWARGS)
+        if sum(outlier("CAT-IV")) > 0:
+            ax = scatter(*self[outlier("CAT-IV")][["wind speed", "active power output"]].values.T, label="CAT-IV",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
                          color="red", marker="4", s=24, **WS_POUT_2D_PLOT_KWARGS)
-        ax = scatter(*self[outlier("others")][["wind speed", "active power output"]].values.T, label="Others",
+        # ax = scatter(*self[outlier("others")][["wind speed", "active power output"]].values.T, label="Others",
+        #              ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
+        #              color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS, **kwargs)
+        ax = scatter(*self[outlier("normal")][["wind speed", "active power output"]].values.T, label="Normal",
                      ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
                      color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS, **kwargs)
-        self["active power output"] *= self.rated_active_power_output
+        self.loc[:, "active power output"] *= self.rated_active_power_output
 
         return ax
 
@@ -381,7 +506,8 @@ class WT(WTandWFBase):
         assert (task in ('load', 'fit')), "'Task' is not in ('load', 'fit')"
         pc_file_path = self.default_results_saving_path["power curve"]
         outlier = load_pkl_file(self.default_results_saving_path["outlier"])['DataCategoryData obj']
-        selected_data_mask = outlier(("others", "CAT-I.a", "CAT-IV.a"))
+        # selected_data_mask = outlier(("others", "CAT-I.a", "CAT-IV.a"))
+        selected_data_mask = outlier("normal")
 
         pc_obj = PowerCurveFittedBy8PLF(
             wind_speed_recording=self['wind speed'].values[selected_data_mask],
@@ -402,7 +528,7 @@ class WT(WTandWFBase):
                                            'max_iteration_without_improv': 1500,
                                            'population_size': 100},
                        params_init_scheme=params_init_scheme,
-                       run_n_times=50,
+                       run_n_times=200,
                        save_to_file_path=pc_file_path,
                        focal_error=0.001,
                        wind_speed=np.arange(0, 28.5, 0.1),

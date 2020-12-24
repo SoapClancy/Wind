@@ -13,6 +13,7 @@ import datetime
 from sklearn.linear_model import LinearRegression
 from tensorflow_probability.python.util.seed_stream import SeedStream
 from tensorflow_probability.python.internal import dtype_util
+import getpass
 
 
 def celsius_to_kelvin(celsius):
@@ -210,8 +211,9 @@ class Wind:
         This function is to look at the actual WS measurements from North Harris
         :return:
         """
-        data_folder_path = Path(r"C:\Users\SoapClancy\OneDrive\PhD\01-PhDProject\Database\Wind_and_NetworkData"
-                                r"\CD-ROM\North harris")
+
+        data_folder_path = Path(f"C:\\Users\\{getpass.getuser()}\\OneDrive\\PhD\\"
+                                f"01-PhDProject\\Database\\Wind_and_NetworkData\\CD-ROM\\North harris")
         actual_high_resol_wind_speed = []
         for this_csv_path in list_all_specific_format_files_in_a_folder_path(data_folder_path, "CSV", ""):
             # Read, and find out how many years in this recording

@@ -21,6 +21,8 @@ from PhysicalInstance_Class import PhysicalInstanceDataFrame
 from parse import parse
 from ErrorEvaluation_Class import DeterministicError
 from Ploting.adjust_Func import *
+from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, StrOneDimensionNdarray, OneDimensionNdarray
+from parse import *
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -113,8 +115,7 @@ class PowerCurveByMfr(PowerCurve):
 
     def __init__(self,
                  air_density: Union[int, float, str] = None,
-                 *, cut_in_ws: Union[int, float] = None,
-                 color=(0.64, 0.08, 0.18),
+                 *, color=(0.64, 0.08, 0.18),
                  linestyle='-.', rated_active_power_output: Union[int, float] = 3000):
         if air_density is None:
             warnings.warn("'air_density' unspecified. Set air_density to 1.15."
@@ -132,17 +133,17 @@ class PowerCurveByMfr(PowerCurve):
 
         mfr_pc_metadata = self.make_mfr_pc_metadata()
         self.mfr_ws = np.concatenate(([-np.inf],
-                                      [cut_in_ws or mfr_pc_metadata.index.values[0] - float_eps * 2],
+                                      [mfr_pc_metadata.index.values[0] - 1],
                                       mfr_pc_metadata.index.values,
                                       [(25 if air_density != 'special' else 100) + float_eps * 10],
                                       [np.inf]))
         self.mfr_ws[self.mfr_ws == 0] = float_eps
         self.mfr_p = np.concatenate(
-            ([float_eps],
-             [float_eps],
+            ([0.],
+             [0.],
              mfr_pc_metadata[air_density if air_density != 'special' else '1.12'].values,
-             [float_eps if air_density != 'special' else self.rated_active_power_output],
-             [float_eps if air_density != 'special' else self.rated_active_power_output])
+             [0. if air_density != 'special' else self.rated_active_power_output],
+             [0. if air_density != 'special' else self.rated_active_power_output])
         ) / self.rated_active_power_output
         self.air_density = air_density
         # self.label = 'Mfr PC\n(' + r'$\rho$' + f'={self.air_density} kg/m' + '$^3$' + ')'
@@ -289,16 +290,16 @@ class PowerCurveByMfr(PowerCurve):
             return np.array(results)
 
     @staticmethod
-    def infer_str_air_density(air_density: Union[int, float, Iterable]) -> Union[str, Tuple[str, ...]]:
+    def infer_str_air_density(air_density: Union[int, float, str, Iterable]) -> Union[str, Tuple[str, ...]]:
         candidates_as_columns = PowerCurveByMfr.make_mfr_pc_metadata().columns
         candidates = candidates_as_columns.values.astype(float)
         if not isinstance(air_density, Iterable):
-            index = np.argmin(np.abs(candidates - air_density))
+            index = np.argmin(np.abs(candidates - float(air_density)))
             return candidates_as_columns[index]
         else:
             str_tuple = []
             for this_air_density in air_density:
-                index = np.argmin(np.abs(candidates - this_air_density))
+                index = np.argmin(np.abs(candidates - this_air_density.astype(float)))
                 str_tuple.append(candidates_as_columns[index])
             return tuple(str_tuple)
 
@@ -401,6 +402,32 @@ class PowerCurveByMfr(PowerCurve):
                     ], dtype=float),
             })
         return metadata
+
+    @classmethod
+    def map_given_power_output_to_another_air_density(
+            cls, *, old_air_density: Union[OneDimensionNdarray, ndarray],
+            new_air_density: Union[OneDimensionNdarray, ndarray],
+            old_power_output: Union[IntFloatConstructedOneDimensionNdarray, ndarray],
+            wind_speed: Union[IntFloatConstructedOneDimensionNdarray, ndarray],
+    ) -> ndarray:
+        old_air_density = cls.infer_str_air_density(OneDimensionNdarray(old_air_density))
+        new_air_density = cls.infer_str_air_density(OneDimensionNdarray(new_air_density))
+        mapping = np.array([str(x) for x in list(zip(old_air_density, new_air_density))])
+
+        old_power_output = IntFloatConstructedOneDimensionNdarray(old_power_output)
+        new_power_output = np.full(old_power_output.shape, np.nan)
+
+        for this_unique_mapping in np.unique(mapping):
+            mask = this_unique_mapping == mapping
+            parse_obj = parse("('{}', '{}')", this_unique_mapping)
+            this_old_air_density = parse_obj[0]
+            this_new_air_density = parse_obj[1]
+            mfr_pc_obj_by_this_old_air_density = cls(this_old_air_density)
+            mfr_pc_obj_by_this_new_air_density = cls(this_new_air_density)
+            ratio = (mfr_pc_obj_by_this_new_air_density(wind_speed[mask]) /
+                     mfr_pc_obj_by_this_old_air_density(wind_speed[mask]))
+            new_power_output[mask] = old_power_output[mask] * ratio
+        return new_power_output
 
     @classmethod
     def air_density_in_docs(cls):
