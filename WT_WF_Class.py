@@ -284,7 +284,12 @@ class WT(WTandWFBase):
                 this_recording_ws = this_recording[1]['wind speed']
                 this_recording_ws_std = this_recording[1]['wind speed std.']
                 this_recording_air_density = this_recording[1]['air density']
+                this_recording_pout = this_recording[1]['active power output'] / self.rated_active_power_output
 
+                # %% ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ DEBUG ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                # if not ((this_recording_ws > 25) and (this_recording_pout > 0.2)):
+                #     continue
+                # %% ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ DEBUG ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
                 this_recording_ws_bin = ws_binned_data_obj(this_recording_ws)
                 this_recording_ws_std_bin = ws_std_binned_data_obj(this_recording_ws_std)
                 this_multi_index_obj = pd.MultiIndex.from_tuples(
@@ -339,6 +344,8 @@ class WT(WTandWFBase):
                 # based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=1.5).values.flatten()
                 based_pout_sim_low, based_pout_sim_high = this_recording_sim(
                     preserved_data_percentage=95).values.flatten()
+                # based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=3).values.flatten()
+
                 # Mapping the value using the relationship among Mfr_PC_rho_x
                 new_power_output = PowerCurveByMfr.map_given_power_output_to_another_air_density(
                     old_air_density=np.array([mfr_pc_densities[0]] * 2),
@@ -348,7 +355,6 @@ class WT(WTandWFBase):
                 )
                 based_pout_sim_low, based_pout_sim_high = new_power_output
 
-                this_recording_pout = this_recording[1]['active power output'] / self.rated_active_power_output
                 if (this_recording_pout >= based_pout_sim_low) and (this_recording_pout <= based_pout_sim_high):
                     outlier.abbreviation[outlier.index == this_recording_index] = 'normal'
                 else:
@@ -528,7 +534,7 @@ class WT(WTandWFBase):
                                            'max_iteration_without_improv': 1500,
                                            'population_size': 100},
                        params_init_scheme=params_init_scheme,
-                       run_n_times=200,
+                       run_n_times=100,
                        save_to_file_path=pc_file_path,
                        focal_error=0.001,
                        wind_speed=np.arange(0, 28.5, 0.1),

@@ -424,8 +424,12 @@ class PowerCurveByMfr(PowerCurve):
             this_new_air_density = parse_obj[1]
             mfr_pc_obj_by_this_old_air_density = cls(this_old_air_density)
             mfr_pc_obj_by_this_new_air_density = cls(this_new_air_density)
-            ratio = (mfr_pc_obj_by_this_new_air_density(wind_speed[mask]) /
-                     mfr_pc_obj_by_this_old_air_density(wind_speed[mask]))
+
+            new_call = mfr_pc_obj_by_this_new_air_density(wind_speed[mask])
+            old_call = mfr_pc_obj_by_this_old_air_density(wind_speed[mask])
+            new_call[np.abs(new_call) < (float_eps * 1e8)] = float_eps
+            old_call[np.abs(old_call) < (float_eps * 1e8)] = float_eps
+            ratio = new_call / old_call
             new_power_output[mask] = old_power_output[mask] * ratio
         return new_power_output
 
