@@ -16,9 +16,9 @@ WS_POUT_SCATTER_ALPHA = 0.5
 
 WS_POUT_SCATTER_SIZE = 1
 
-MFR_KWARGS = ({'ws': range(30), 'marker': 's', 's': 12, 'zorder': 300},
-              {'ws': range(30), 'marker': '*', 'color': 'black', 's': 16, 'zorder': 300},
-              {'ws': range(30), 'marker': '+', 'color': 'lime', 's': 16, 'zorder': 300})
+MFR_KWARGS = ({'ws': range(35), 'marker': 's', 's': 12, 'zorder': 300},
+              {'ws': range(35), 'marker': '*', 'color': 'black', 's': 16, 'zorder': 300},
+              {'ws': range(35), 'marker': '+', 'color': 'lime', 's': 16, 'zorder': 300})
 
 FEATURE_NORMAL_RANGE = {
     'pressure': (900., 1050.),

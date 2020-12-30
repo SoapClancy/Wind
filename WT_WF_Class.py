@@ -163,11 +163,10 @@ class WT(WTandWFBase):
     def outlier_name_mapper(self) -> DataCategoryNameMapper:
         meta = [["missing data", "missing", -1, "N/A"],
                 ["Normal data", "normal", 0, "the recordings that can be captured by the simulation"],
-                ["Low Pout-high WS", "CAT-I.a", 1, "due to WT cut-out effects"],
-                ["Low Pout-high WS", "CAT-I.b", 2, "caused by the other sources"],
-                ["Low maximum Pout", "CAT-II", 3, "curtailment"],
-                ["Linear Pout-WS", "CAT-III", 4, "e.g., constant WS-variable Pout"],
-                ["Scattered", "CAT-IV", 5, "the recordings rejected by the simulation"]]
+                ["Low maximum Pout", "CAT-I", 1, "curtailment"],
+                ["Linear Pout-WS", "CAT-II", 2, "e.g., constant WS-variable Pout"],
+                ["Low Pout-high WS", "CAT-III", 3, "Low Pout-high WS caused by the other sources"],
+                ["Scattered", "CAT-IV", 4, "the recordings rejected by the simulation"]]
 
         mapper = DataCategoryNameMapper.init_from_template(rows=len(meta))
         mapper[:] = meta
@@ -342,9 +341,9 @@ class WT(WTandWFBase):
                                                           columns=(0,),
                                                           index=this_recording_sim.columns)
                 # based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=1.5).values.flatten()
-                based_pout_sim_low, based_pout_sim_high = this_recording_sim(
-                    preserved_data_percentage=95).values.flatten()
-                # based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=3).values.flatten()
+                # based_pout_sim_low, based_pout_sim_high = this_recording_sim(
+                #     preserved_data_percentage=95).values.flatten()
+                based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=3).values.flatten()
 
                 # Mapping the value using the relationship among Mfr_PC_rho_x
                 new_power_output = PowerCurveByMfr.map_given_power_output_to_another_air_density(
@@ -477,15 +476,15 @@ class WT(WTandWFBase):
         if sum(outlier("CAT-I")) > 0:
             ax = scatter(*self[outlier("CAT-I")][["wind speed", "active power output"]].values.T, label="CAT-I",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="fuchsia", marker="2", s=24, **WS_POUT_2D_PLOT_KWARGS)
+                         color="black", marker="x", s=16,  **WS_POUT_2D_PLOT_KWARGS)
         if sum(outlier("CAT-II")) > 0:
             ax = scatter(*self[outlier("CAT-II")][["wind speed", "active power output"]].values.T, label="CAT-II",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="black", marker="x", s=16, **WS_POUT_2D_PLOT_KWARGS)
+                         color="red", marker="|", s=28, zorder=11, **WS_POUT_2D_PLOT_KWARGS)
         if sum(outlier("CAT-III")) > 0:
             ax = scatter(*self[outlier("CAT-III")][["wind speed", "active power output"]].values.T, label="CAT-III",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="cyan", marker="+", s=24, zorder=11, **WS_POUT_2D_PLOT_KWARGS)
+                         color="darkorange", marker="v", s=14,  **WS_POUT_2D_PLOT_KWARGS)
         # if sum(outlier("CAT-IV.a")) > 0:
         #     ax = scatter(*self[outlier("CAT-IV.a")][["wind speed", "active power output"]].values.T, label="CAT-IV.a",
         #                  ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
@@ -493,7 +492,7 @@ class WT(WTandWFBase):
         if sum(outlier("CAT-IV")) > 0:
             ax = scatter(*self[outlier("CAT-IV")][["wind speed", "active power output"]].values.T, label="CAT-IV",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="red", marker="4", s=24, **WS_POUT_2D_PLOT_KWARGS)
+                         color="green", marker="3", s=24, zorder=-9, **WS_POUT_2D_PLOT_KWARGS)
         # ax = scatter(*self[outlier("others")][["wind speed", "active power output"]].values.T, label="Others",
         #              ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
         #              color="royalblue", zorder=10, **WS_POUT_2D_PLOT_KWARGS, **kwargs)
@@ -531,7 +530,7 @@ class WT(WTandWFBase):
             else:
                 params_init_scheme = 'average'
             pc_obj.fit(ga_algorithm_param={'max_num_iteration': 2500,
-                                           'max_iteration_without_improv': 1500,
+                                           'max_iteration_without_improv': 1000,
                                            'population_size': 100},
                        params_init_scheme=params_init_scheme,
                        run_n_times=100,

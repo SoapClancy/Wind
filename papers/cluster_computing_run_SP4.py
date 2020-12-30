@@ -6,7 +6,7 @@ cwd = Path().cwd()
 spec = spec_from_file_location("TSE2020", cwd / 'TSE2020.py')
 foo = module_from_spec(spec)
 spec.loader.exec_module(foo)
-foo. individual_wind_turbine_outliers_outlier_detector(power_curve_model_task = 'fit',
+foo.individual_wind_turbine_outliers_outlier_detector(power_curve_model_task = 'fit',
                                                        wt_index = (2, 3))
 """
 if __name__ == '__main__':
