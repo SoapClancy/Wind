@@ -652,10 +652,11 @@ def sasa_using_fitted_pc_to_simulate(wind_turbine_obj=None):
 
 if __name__ == "__main__":
     # cc = sasa_combine_upper_and_lower()
-    sasa_using_fitted_pc_to_simulate()
+    # sasa_using_fitted_pc_to_simulate()
 
     # %% Draft codes
     # for j in set(range(6)) - {1}:
     #     init_setup(j)
     #     print(THIS_WIND_TURBINE.obj_name)
     #     all_combinations_check()
+    sasa_high_resol_check()

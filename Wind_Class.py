@@ -241,7 +241,7 @@ class Wind:
             # Aggregate to 10 seconds
             this_reading_usable = this_file_pd['V50']
             this_reading_usable.index = pd_date_time_index
-            this_reading_usable = this_reading_usable.resample("10S").mean()
+            this_reading_usable = this_reading_usable.resample("3S").mean()
             actual_high_resol_wind_speed.append(this_reading_usable)
         # Analysis through pure Numpy
         actual_high_resol_wind_speed = np.concatenate(actual_high_resol_wind_speed)
@@ -272,6 +272,7 @@ if __name__ == '__main__':
         this_wind_turbine['relative humidity'].values / 100,
         this_wind_turbine['barometric pressure'].values * 100
     )
-    mfr_pc_instances = PowerCurveByMfr.init_multiple_instances(rho)
-    for _, this_mfr_pc in enumerate(mfr_pc_instances):
-        this_mfr_pc.sasa_algorithm_to_cal_possible_pout_range(range(2, 26))
+    _func = Wind.learn_transition_by_looking_at_actual_high_resol()
+    ws = np.arange(0, 30, 0.1)
+    y = _func(ws)
+    series(ws, y)

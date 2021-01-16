@@ -79,6 +79,7 @@ class WTandWFBase(PhysicalInstanceDataFrame):
              mfr_kwargs: Sequence[dict] = None,
              mfr_mode: str = 'continuous',
              plot_scatter_pc: bool = False,
+             save_to_buffer: bool = False,
              **kwargs):
         ax = scatter(self['wind speed'].values,
                      self['active power output'].values / self.rated_active_power_output,
@@ -103,11 +104,12 @@ class WTandWFBase(PhysicalInstanceDataFrame):
                 ws=np.arange(0, 50, 0.5),
                 ax=ax,
                 plot_recording=False,
+                save_to_buffer=save_to_buffer,
                 **dict(ChainMap(kwargs, WS_POUT_2D_PLOT_KWARGS))
             )
         return ax
 
-    def twin_time_series_plot(self, *, time_window_mask: Sequence[bool],
+    def twin_time_series_plot(self, *, time_window_mask: Sequence[bool] = slice(None),
                               x_axis_format: str = '%H',
                               x_label: str = 'Time of a Day [Hour]',
                               wind_speed_y_lim=(-0.05, 27.55),
@@ -128,6 +130,7 @@ class WTandWFBase(PhysicalInstanceDataFrame):
         # ask matplotlib for the plotted objects and their labels
         lines, labels = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.get_legend().remove()
         ax2.legend(lines + lines2, labels + labels2, loc=0, prop={'size': 10})
         return ax, ax2
 
@@ -476,7 +479,7 @@ class WT(WTandWFBase):
         if sum(outlier("CAT-I")) > 0:
             ax = scatter(*self[outlier("CAT-I")][["wind speed", "active power output"]].values.T, label="CAT-I",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="black", marker="x", s=16,  **WS_POUT_2D_PLOT_KWARGS)
+                         color="black", marker="x", s=16, **WS_POUT_2D_PLOT_KWARGS)
         if sum(outlier("CAT-II")) > 0:
             ax = scatter(*self[outlier("CAT-II")][["wind speed", "active power output"]].values.T, label="CAT-II",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
@@ -484,7 +487,7 @@ class WT(WTandWFBase):
         if sum(outlier("CAT-III")) > 0:
             ax = scatter(*self[outlier("CAT-III")][["wind speed", "active power output"]].values.T, label="CAT-III",
                          ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
-                         color="darkorange", marker="v", s=14,  **WS_POUT_2D_PLOT_KWARGS)
+                         color="darkorange", marker="v", s=14, **WS_POUT_2D_PLOT_KWARGS)
         # if sum(outlier("CAT-IV.a")) > 0:
         #     ax = scatter(*self[outlier("CAT-IV.a")][["wind speed", "active power output"]].values.T, label="CAT-IV.a",
         #                  ax=ax if not plot_individual else None, alpha=WS_POUT_SCATTER_ALPHA,
@@ -503,9 +506,10 @@ class WT(WTandWFBase):
 
         return ax
 
-    def outlier_report(self, outlier: DataCategoryData = None):
+    def outlier_report(self, outlier: DataCategoryData = None, *, save_to_buffer=False):
         outlier = outlier or load_pkl_file(self.default_results_saving_path["outlier"])['DataCategoryData obj']
-        outlier.report(self.default_results_saving_path["outlier"].parent / "report.csv")
+        return outlier.report(self.default_results_saving_path["outlier"].parent / "report.csv",
+                              save_to_buffer=save_to_buffer)
 
     def select_data_and_get_power_curve_model(self, task: str, **kwargs) -> PowerCurveFittedBy8PLF:
         assert (task in ('load', 'fit')), "'Task' is not in ('load', 'fit')"

@@ -1,27 +1,28 @@
 from WT_WF_Class import WF, WT
 import pandas as pd
-from project_utils import project_path_
+from project_utils import *
 import numpy as np
 from numpy import ndarray
 import datetime
 import re
-from File_Management.path_and_file_management_Func import list_all_specific_format_files_in_a_folder_path
-from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save
 from scipy.io import loadmat
 import os
 from pathlib import Path
 from Ploting.fast_plot_Func import *
 from TimeSeries_Class import TimeSeries, merge_two_time_series_df
 import re
-from File_Management.path_and_file_management_Func import try_to_find_file
+from File_Management.path_and_file_management_Func import *
+from File_Management.load_save_Func import *
 from PowerCurve_Class import PowerCurveFittedBy8PLF
 from typing import Tuple
-from collections import OrderedDict
 import getpass
 from functools import reduce
 from Ploting.data_availability_plot_Func import data_availability_plot
 from Ploting.wind_rose_plot_Func import wind_rose_plot
 import copy
+from Writting import *
+from Writting.utils import put_picture_into_a_docx
+from collections import OrderedDict
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\\" + getpass.getuser() + r"\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 Croatia_WF_LOCATION_MAPPER = {
@@ -40,8 +41,9 @@ Croatia_WF_LOCATION_MAPPER = {
     'Zelengrad': (44.125, 15.738, 484.6),
 }
 
-this_wind_farm_name = 'Zelengrad'
 ws_pout_only = False
+
+
 # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True) -> OrderedDict:
     wind_farm = OrderedDict()
@@ -72,7 +74,6 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
 
         wind_farm_name = Path(dir_name).name  # type: str
 
-
         def one_variable_reading(file_postfix: str, col_name: str = None):
             file_path = Path(dir_name) / ''.join((wind_farm_name, file_postfix))
             if try_to_find_file(file_path):
@@ -94,7 +95,6 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
             #     one_variable = pd.read_csv(Path(dir_name) / ''.join((wind_farm_name, file_postfix)), engine='python')
 
             return one_variable
-
 
         wind_farm_wind_speed = one_variable_reading('_scada_ws.csv')
         wind_farm_power_output = one_variable_reading('_scada_pow.csv')
@@ -162,20 +162,20 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
         # if wind_farm_name in ('Bruska', 'Zelengrad'):
         #     ws = this_wind_farm['wind speed'].values
         #     wd = this_wind_farm['wind direction'].values
-            # wind_rose_plot(ws, wd)
-            # n = 8
-            # wd_range_mask = [
-            #     np.bitwise_and(wd >= i * 90 / n, wd < (i + 1) * 90 / n) for i in range(n)
-            # ]
-            # for range_i, this_mask in enumerate(wd_range_mask):
-            #     scatter(ws[this_mask],
-            #             this_wind_farm['active power output'].values[this_mask] / wf_rated_power_mapper[wind_farm_name],
-            #             color='royalblue',
-            #             x_label='Wind Speed [m/s]',
-            #             x_lim=(-0.5, 33.5),
-            #             y_lim=(-0.05, 1.05),
-            #             y_label='Power Output [p.u.]',
-            #             save_file_=wind_farm_name + f"_{range_i}", save_format='svg')
+        # wind_rose_plot(ws, wd)
+        # n = 8
+        # wd_range_mask = [
+        #     np.bitwise_and(wd >= i * 90 / n, wd < (i + 1) * 90 / n) for i in range(n)
+        # ]
+        # for range_i, this_mask in enumerate(wd_range_mask):
+        #     scatter(ws[this_mask],
+        #             this_wind_farm['active power output'].values[this_mask] / wf_rated_power_mapper[wind_farm_name],
+        #             color='royalblue',
+        #             x_label='Wind Speed [m/s]',
+        #             x_lim=(-0.5, 33.5),
+        #             y_lim=(-0.05, 1.05),
+        #             y_label='Power Output [p.u.]',
+        #             save_file_=wind_farm_name + f"_{range_i}", save_format='svg')
 
         # %% Pout-WS scatter plot
         # scatter(this_wind_farm.iloc[:, 0].values,
@@ -183,10 +183,12 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
         #         color='royalblue',
         #         x_label='Wind Speed [m/s]',
         #         x_lim=(-0.5, 33.5),
-        #         y_lim=(-0.05 * this_wind_farm.rated_active_power_output, 1.05 * this_wind_farm.rated_active_power_output),
+        #         y_lim=(-0.05 * this_wind_farm.rated_active_power_output,
+        #               1.05 * this_wind_farm.rated_active_power_output),
         #         y_label='Power Output [MW]',
         #         save_file_=wind_farm_name, save_format='svg')
         return wind_farm
+
 
 # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 # return_val = wind_farm[wind_farm_name]
@@ -319,17 +321,170 @@ def load_raw_36_wts_in_nez():
     return wts
 
 
-def load_high_resol_for_averaging_effects_analysis():
+def load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines: bool = False):
     folder_path = Path(project_path_) / 'Data/Raw_measurements/high_resol/'
-    high_resol = {}
+    # high_resol = OrderedDict()
+    high_resol = dict()
+    if load_all_wind_turbines:
+        if try_to_find_file(folder_path / 'high_resol_all.pkl'):
+            return load_pkl_file(folder_path / 'high_resol_all.pkl')  # type:pd.DataFrame
     for this_file in folder_path.iterdir():
-        if this_file.match(r'*.mat'):
-            file_name = re.match(r"\b.*(?=.mat)", this_file.name)[0]
-            wts = loadmat(str(this_file))
-            data = wts[file_name][:, [10, 11]]
-            data[:, -1] *= 3000
-            high_resol.setdefault(file_name, data)
-    return high_resol
+        if not load_all_wind_turbines:
+            # For compatibility of old signature
+            if this_file.match(r'*.mat'):
+                file_name = re.match(r"\b.*(?=.mat)", this_file.name)[0]
+                wts = loadmat(str(this_file))
+                data = wts[file_name][:, [10, 11]]
+                data[:, -1] *= 3000
+                high_resol.setdefault(file_name, data)
+        else:
+            if this_file.match(r'*.xlsx'):
+                file_name = this_file.stem
+                data = pd.read_excel(this_file, engine='openpyxl')
+                # Rename columns
+                old_column_names = data.columns
+                assert len(old_column_names) == len(set(old_column_names))
+                new_column_names = []
+                for i, this_old_column_name in enumerate(old_column_names):
+                    if "WTG" in this_old_column_name:
+                        if 'kW' in this_old_column_name:
+                            this_new_column_name = ("kW", new_column_names[-1][1])
+                        elif ('Kvar' in this_old_column_name) or ('kVAR' in this_old_column_name):
+                            this_new_column_name = ("kVAR", new_column_names[-2][1])
+                        else:
+                            this_new_column_name = ("WT_WS", str(int(re.findall(r"\d+", this_old_column_name)[0])))
+                    elif "kW" in this_old_column_name:
+                        this_new_column_name = ("kW", new_column_names[-1][1])
+                    elif ('Kvar' in this_old_column_name) or ('kVAR' in this_old_column_name):
+                        this_new_column_name = ("kVAR", new_column_names[-2][1])
+                    else:
+                        raise KeyError
+                    new_column_names.append(this_new_column_name)
+                assert len(new_column_names) == len(set(new_column_names)) == len(old_column_names) == len(
+                    set(old_column_names))
+                data.columns = pd.MultiIndex.from_tuples(new_column_names, names=('dimension', 'WT_no'))
+                data.index = pd.MultiIndex.from_product([[file_name], data.index], names=('file name', 'id'))
+                high_resol.setdefault(file_name, data)
+    # Merge the data sets (only if load all wind turbines)
+    if load_all_wind_turbines:
+        wind_farm_basic = pd.concat(high_resol.values())
+        save_pkl_file(folder_path / 'high_resol_all.pkl', wind_farm_basic)
+        return wind_farm_basic  # type:pd.DataFrame
+    return high_resol  # type:list
+
+
+def check_possible_hysteresis_rules():
+    """
+    备注：cut out和restart可在以下找到：WT6['110406 Aik Data']
+    :return:
+    """
+    resol = 1
+    high_resol = load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines=True)
+    hi_wts = {}
+    visions = ("Cut in", "Cut in back", "Cut out", "Restart")
+    rules = ["Past 10 min average", "Past 3 sec average"] + \
+            [f"Past {i} sec" for i in range(1, 2)]
+
+    # %% Prepare individual data source
+    high_resol.columns.__getattribute__('get_loc_level')('1', level=1)
+    file_names = list(set(high_resol.index.get_level_values(0)))
+    file_names.sort()
+    wt_nos = set(high_resol.columns.get_level_values(1))
+    wt_keys = [f"WT{wt_no}" for wt_no in wt_nos]
+    wt_keys.sort(key=lambda x: int(re.findall(r"\d+", x)[0]))
+    for file_name in file_names:
+        for wt_no in wt_nos:
+            data = high_resol.iloc[
+                high_resol.index.__getattribute__('get_locs')([file_name, slice(None)]),
+                high_resol.columns.__getattribute__('get_locs')([slice(None), wt_no])
+            ]
+            data.index = data.index.droplevel(0)
+            data.columns = data.columns.droplevel(1)
+            data = data.drop('kVAR', axis=1)
+            data = data.rename(columns={
+                'WT_WS': 'wind speed',
+                'kW': 'active power output'
+            })
+            wt_obj = WT(obj_name=f"WT{wt_no} in {file_name}",
+                        predictor_names=('wind speed',),
+                        dependant_names=('active power output',),
+                        data=data)
+            if np.all(np.isnan(wt_obj.values)):
+                wt_obj = None
+            else:
+                wt_obj.loc[:, 'active power output'] /= wt_obj.rated_active_power_output
+
+            if f"WT{wt_no}" not in hi_wts:
+                hi_wts.setdefault(f"WT{wt_no}", {file_name: wt_obj})
+            else:
+                hi_wts[f"WT{wt_no}"].update({file_name: wt_obj})
+
+    # %% Rules to check
+    def checks_portfolio(_wt_obj: WT, _vision: str, _rule: str) -> list:
+        assert _vision in visions
+        result = []
+
+        # Check indices for interest event happen
+        interest_event_index = []
+        pout = _wt_obj['active power output'].values
+        ws = _wt_obj['wind speed'].values
+        for i in range(1, _wt_obj.shape[0]):
+            if np.all(pout > 0) or np.all(pout <= 0):
+                break
+            if _vision == "Cut out":
+                if all((pout[i] <= 0, pout[i - 1] > 0, ws[i] > 10)):
+                    interest_event_index.append(_wt_obj.index[i])
+            elif _vision == "Restart":
+                if all((pout[i] > 0, pout[i - 1] <= 0, ws[i] > 10)):
+                    interest_event_index.append(_wt_obj.index[i])
+            elif _vision == "Cut in":
+                if all((pout[i] > 0, pout[i - 1] <= 0, ws[i] < 10)):
+                    interest_event_index.append(_wt_obj.index[i])
+            else:  # Cut in back
+                if all((pout[i] <= 0, pout[i - 1] > 0, ws[i] < 10)):
+                    interest_event_index.append(_wt_obj.index[i])
+
+        # Check all rules
+        if _rule == 'Past 10 min average':
+            for index in interest_event_index:
+                result.append(_wt_obj.loc[index - 1 - 600 // resol:index - 1]['wind speed'].mean())
+        elif _rule == "Past 3 sec average":
+            for index in interest_event_index:
+                result.append(_wt_obj.loc[index - 1 - 3 // resol:index - 1]['wind speed'].mean())
+        elif _rule == "Past 1 sec":
+            for index in interest_event_index:
+                result.append(_wt_obj.loc[[index - 1]]['wind speed'].mean())
+        else:  # past 100 sec exp ave
+            pass
+        return result
+
+    # Iterate over the individual data source
+    results = {key: {key_2: [] for key_2 in rules} for key in visions}
+    for wt_key in wt_keys:
+        for file_name in file_names:
+            wt_obj = hi_wts[wt_key][file_name]  # type:Union[WT, None]
+            if wt_obj is None:
+                continue
+
+            for vision in visions:
+                for rule in rules:
+                    results[vision][rule].extend(checks_portfolio(wt_obj, vision, rule))
+
+    # Collect the plot buffer
+    results_plot = OrderedDict()
+    for vision in visions:
+        results_plot[vision] = OrderedDict()
+        for rule in rules:
+            plot_data = np.array(results[vision][rule])
+            rule_extend = rule + "\n" + f"Average = {np.mean(plot_data):.3f} m/s"
+            ax = hist(plot_data, bins=np.arange(0, 35, 0.5), density=True,
+                      x_label=WS_POUT_2D_PLOT_KWARGS['x_label'], y_label='Probability Density')
+            y_lim = ax.get_ylim()
+            ax = vlines(np.mean(plot_data), color='r', ax=ax, y_lim=y_lim, save_to_buffer=True)
+            results_plot[vision].update(OrderedDict([(f"{rule_extend}", (ax, 7.5))]))
+    # Write and save
+    put_picture_into_a_docx(results_plot,
+                            project_path_ / r"Data\Results\transient_study\TSE2020\possible_hysteresis_rules.docx")
 
 
 if __name__ == '__main__':
@@ -379,4 +534,5 @@ if __name__ == '__main__':
     #             save_file_='wt15'
     #             )
 
-    # hi = load_high_resol_for_averaging_effects_analysis()
+    # hi = load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines=True)
+    check_possible_hysteresis_rules()
