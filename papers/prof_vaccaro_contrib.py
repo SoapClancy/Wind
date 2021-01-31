@@ -10,7 +10,7 @@ def fit_mc(*, ws_resol=None, wd_resol=None):
     met_mast_raw = load_dalry_wind_farm_met_mast()
 
     mask = np.full(met_mast_raw.__len__(), fill_value=np.False_)
-    mask[:len(met_mast_raw) // 36] = np.True_
+    mask[:len(met_mast_raw) // 3] = np.True_
 
     ws_raw = met_mast_raw.loc[mask, "wind speed_2"]
     wd_raw = met_mast_raw.loc[mask, "wind direction"]
@@ -39,23 +39,24 @@ def fit_mc(*, ws_resol=None, wd_resol=None):
             now_mc_range.append(mc_obj.get_next_digitize_range_from_current_raw(now_test[i], (5, 95),
                                                                                 method="sampling",
                                                                                 # method="interpolation",
-                                                                                resample=False))
+                                                                                ))
             now_mc_mean.append(mc_obj.get_next_digitize_mean_from_current_raw(now_test[i],
                                                                               method="sampling",
-                                                                              # method="weighted average",
-                                                                              resample=False))
+                                                                              # method="weighted average"
+                                                                              ))
         now_mc_range = np.array(now_mc_range)
         now_mc_mean = np.array(now_mc_mean)
 
         # Plot
-        y_label = now_name + ("\n[m/s]" if "speed" in now_name else "[degrees]")
+        y_label = now_name + ("\n[m/s]" if "speed" in now_name else "\n[degrees]")
+        y_lim = (-0.05, 35.5) if "speed" in now_name else (-1, 361)
         ax = series(x=range_obj[1:], y=now_test[1:], color="royalblue", figure_size=(10, 2.4), label="Actual recording",
-                    x_label="Recording index [every 10 min]", y_label=y_label,
+                    x_label="Recording index [every 10 min]", y_label=y_label, y_lim=y_lim,
                     x_lim=(range_obj[1:][0] - 1, range_obj[1:][-1] + 1))
         ax = series(x=range_obj[1:], y=now_mc_range[:-1, 0], ax=ax, color="green", linestyle="--",
                     label="MC 5-95 percentiles")
         ax = series(x=range_obj[1:], y=now_mc_mean[:-1], ax=ax, color="red", linestyle="-.", label="MC average")
-        adjust_legend_in_ax(ax, ncol=3)
+        adjust_legend_in_ax(ax, ncol=3, loc="best")
         ax = series(x=range_obj[1:], y=now_mc_range[:-1, 1], ax=ax, color="green", linestyle="--",
                     save_file_=f"{now_name}_{now_resol}", save_format="svg")
 
@@ -68,6 +69,6 @@ if __name__ == "__main__":
         if r_ws == 0.5:
             fit_mc(ws_resol=r_ws)
 
-    for r_wd in wd_resols:
-        if r_wd == 10:
-            fit_mc(wd_resol=r_wd)
+    # for r_wd in wd_resols:
+    #     if r_wd == 30:
+    #         fit_mc(wd_resol=r_wd)
