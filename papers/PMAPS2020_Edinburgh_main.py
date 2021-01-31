@@ -308,7 +308,7 @@ def estimate_active_power_output_by_two_dim_mc_model(specific_this_wind_turbine,
             continue
 
         # 选取每一个可能的下一个状态
-        next_state_pdf = mc_obj.get_next_state_pdf_from_current_state(this_two_dim_encoded).flatten()
+        next_state_pdf = mc_obj.get_next_state_pmf_from_current_state(this_two_dim_encoded).flatten()
 
         pout_this = []
         for this_next_possible_two_dim_encoded in range(next_state_pdf.size):
