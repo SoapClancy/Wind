@@ -37,12 +37,12 @@ def fit_mc(*, ws_resol=None, wd_resol=None):
         range_obj = range(test_slice.start, test_slice.stop, test_slice.step or 1)
         for i in range_obj:
             now_mc_range.append(mc_obj.get_next_digitize_range_from_current_raw(now_test[i], (5, 95),
-                                                                                # method="sampling",
-                                                                                method="interpolation",
+                                                                                method="sampling",
+                                                                                # method="interpolation",
                                                                                 resample=False))
             now_mc_mean.append(mc_obj.get_next_digitize_mean_from_current_raw(now_test[i],
-                                                                              # method="sampling",
-                                                                              method="weighted average",
+                                                                              method="sampling",
+                                                                              # method="weighted average",
                                                                               resample=False))
         now_mc_range = np.array(now_mc_range)
         now_mc_mean = np.array(now_mc_mean)
