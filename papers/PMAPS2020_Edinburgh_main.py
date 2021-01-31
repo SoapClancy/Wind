@@ -15,7 +15,7 @@ from BivariateAnalysis_Class import Bivariate
 from Time_Processing.Season_Enum import SeasonTemplate1
 import copy
 from WT_WF_Class import WT
-from MarkovChain_Class import OneDimMarkovChain
+from MarkovChain.MarkovChain_Class import OneDimMarkovChain
 from BivariateAnalysis_Class import MethodOfBins
 from File_Management.load_save_Func import load_exist_pkl_file_otherwise_run_and_save, save_pkl_file, load_npy_file, \
     load_pkl_file

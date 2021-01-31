@@ -23,6 +23,12 @@ import copy
 from Writting import *
 from Writting.utils import put_picture_into_a_docx
 from collections import OrderedDict
+from pandasql import sqldf
+
+
+def pysqldf(q):
+    return sqldf(q, globals())
+
 
 Croatia_RAW_DATA_PATH = Path(r"C:\Users\\" + getpass.getuser() + r"\OneDrive\PhD\01-PhDProject\Database\Croatia\03")
 Croatia_WF_LOCATION_MAPPER = {
@@ -287,6 +293,24 @@ def load_raw_wt_from_txt_file_and_temperature_from_csv() -> Tuple[WT, ...]:
     return tuple(wind_turbines)
 
 
+def load_dalry_wind_farm_met_mast():
+    @load_exist_pkl_file_otherwise_run_and_save(project_path_ / f'Data/Raw_measurements/Darly/Met_Mast.pkl')
+    def get_measurements():
+        one_reading = pd.read_csv(project_path_ / f'Data/Raw_measurements/Darly/Met_Mast.txt', sep='\t')
+        one_reading.rename(mapper={"PCTimeStamp": "datetime",
+                                   "VMET_Avg. Wind speed 1 (1)": "wind speed_1",
+                                   "VMET_Avg. Wind speed 2 (2)": "wind speed_2",
+                                   "VMET_Avg. Wind dir. 1 (3)": "wind direction"}, axis=1, inplace=True)
+        index = pd.to_datetime(one_reading.iloc[:, 0])
+        one_reading.index = index
+        one_reading.drop(labels='datetime', axis=1, inplace=True)
+        mask = np.bitwise_or(one_reading.loc[:, "wind direction"] < 0, one_reading.loc[:, "wind direction"] > 360)
+        one_reading.loc[mask, "wind direction"] = np.nan
+        return one_reading
+
+    return get_measurements()
+
+
 def create_dalry_wind_farm_obj_using_wf_filling_missing_old():
     @load_exist_pkl_file_otherwise_run_and_save(project_path_ /
                                                 'Data/Results/filling_missing/WF_filling_missing_old.pkl')
@@ -338,9 +362,12 @@ def load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines: bool 
                 data[:, -1] *= 3000
                 high_resol.setdefault(file_name, data)
         else:
-            if this_file.match(r'*.xlsx'):
+            if re.match(r'^.*(xlsx|xls)$', this_file.__str__(), re.I):
                 file_name = this_file.stem
-                data = pd.read_excel(this_file, engine='openpyxl')
+                if this_file.suffix == ".xls":
+                    data = pd.read_excel(this_file)
+                else:
+                    data = pd.read_excel(this_file, engine='openpyxl')
                 # Rename columns
                 old_column_names = data.columns
                 assert len(old_column_names) == len(set(old_column_names))
@@ -382,7 +409,7 @@ def check_possible_hysteresis_rules():
     high_resol = load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines=True)
     hi_wts = {}
     visions = ("Cut in", "Cut in back", "Cut out", "Restart")
-    rules = ["Past 10 min average", "Past 3 sec average"] + \
+    rules = [f"Past {x} seconds {y}" for x in (600, 60, 3) for y in ("average", "max", "min")] + \
             [f"Past {i} sec" for i in range(1, 2)]
 
     # %% Prepare individual data source
@@ -445,17 +472,20 @@ def check_possible_hysteresis_rules():
                     interest_event_index.append(_wt_obj.index[i])
 
         # Check all rules
-        if _rule == 'Past 10 min average':
-            for index in interest_event_index:
-                result.append(_wt_obj.loc[index - 1 - 600 // resol:index - 1]['wind speed'].mean())
-        elif _rule == "Past 3 sec average":
-            for index in interest_event_index:
-                result.append(_wt_obj.loc[index - 1 - 3 // resol:index - 1]['wind speed'].mean())
-        elif _rule == "Past 1 sec":
+        now_sec = int(re.match(r"^.*\s(\d+)\s\w*(\s?)(.*)$", _rule).group(1))
+        now_case = re.match(r"^.*\s(\d+)\s\w*(\s?)(.*)$", _rule).group(3)
+        if now_sec == 1:
             for index in interest_event_index:
                 result.append(_wt_obj.loc[[index - 1]]['wind speed'].mean())
-        else:  # past 100 sec exp ave
-            pass
+        else:
+            for index in interest_event_index:
+                if now_case == "average":
+                    result.append(_wt_obj.loc[index - 1 - now_sec // resol:index - 1]['wind speed'].mean())
+                elif now_case == "max":
+                    result.append(_wt_obj.loc[index - 1 - now_sec // resol:index - 1]['wind speed'].max())
+                else:
+                    result.append(_wt_obj.loc[index - 1 - now_sec // resol:index - 1]['wind speed'].min())
+
         return result
 
     # Iterate over the individual data source
@@ -476,11 +506,15 @@ def check_possible_hysteresis_rules():
         results_plot[vision] = OrderedDict()
         for rule in rules:
             plot_data = np.array(results[vision][rule])
-            rule_extend = rule + "\n" + f"Average = {np.mean(plot_data):.3f} m/s"
-            ax = hist(plot_data, bins=np.arange(0, 35, 0.5), density=True,
+            plot_data = np.around(plot_data, 1)
+            rule_extend = (rule + "\n" + f"Average = {np.mean(plot_data):.3f} m/s" +
+                           "\n" + f"Min = {np.min(plot_data):.3f} m/s" +
+                           "\n" + f"Max = {np.max(plot_data):.3f} m/s")
+            ax = hist(plot_data, bins=np.arange(-0.05, 35, 0.1), density=True,
+                      edgecolor='royalblue', color='royalblue',
                       x_label=WS_POUT_2D_PLOT_KWARGS['x_label'], y_label='Probability Density')
             y_lim = ax.get_ylim()
-            ax = vlines(np.mean(plot_data), color='r', ax=ax, y_lim=y_lim, save_to_buffer=True)
+            ax = vlines(np.mean(plot_data), color='r', ax=ax, y_lim=y_lim, save_to_buffer=True, label="Mean")
             results_plot[vision].update(OrderedDict([(f"{rule_extend}", (ax, 7.5))]))
     # Write and save
     put_picture_into_a_docx(results_plot,
@@ -535,4 +569,21 @@ if __name__ == '__main__':
     #             )
 
     # hi = load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines=True)
-    check_possible_hysteresis_rules()
+    # check_possible_hysteresis_rules()
+    load_dalry_wind_farm_met_mast()
+    # %% SQL practice
+    # df_1 = load_weather_data()
+    # sql_str = """
+    # SELECT `time`, `environmental temperature`
+    # FROM df_1
+    # WHERE (`time` BETWEEN date('2007-01-01') AND date('2008-01-01')) AND (
+    # `environmental temperature` < 0)
+    # """
+    # WHERE `time` BETWEEN strftime('%Y-%m-%d %H:%M:%S','2007-01-01', 'start of day', '+14 hours')
+    # AND date('2008-01-01')
+    # WHERE `time` BETWEEN datetime('2007-01-01', 'start of day', '+13 hours') AND date('2008-01-01')
+    # WHERE `time` BETWEEN strftime('%Y-%m-%d %H:%M:%S', '2007-01-01 12:00:00') AND date('2008-01-01')
+
+    # WHERE `time` BETWEEN date('2007-01-01') AND date('2008-01-01')
+
+    # tt2 = sqldf(sql_str)
