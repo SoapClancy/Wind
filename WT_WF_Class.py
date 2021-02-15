@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from Regression_Analysis.DeepLearning_Class import datetime_one_hot_encoder, MatlabLSTM, \
-    prepare_data_for_nn
 import numpy as np
 import pandas as pd
 from Time_Processing.format_convert_Func import datetime64_ndarray_to_datetime_tuple, np_datetime64_to_datetime

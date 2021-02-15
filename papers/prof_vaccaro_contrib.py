@@ -29,7 +29,7 @@ def fit_mc(*, ws_resol=None, wd_resol=None):
         now_name = key  # type: str
         now_data = value[0]  # type: pd.Series
         now_resol = value[1]  # type: Union[float, int]
-        mc_obj = OneDimMarkovChain.init_from_one_dim_ndarray(now_data.values, now_resol)
+        mc_obj = OneDimMarkovChain.init_from_one_dim_ndarray(now_data.values, now_resol, use_laplace_smooth=True)
 
         now_test = ws_test if now_name == "Wind speed" else wd_test
         now_mc_range = []
@@ -65,10 +65,10 @@ if __name__ == "__main__":
     ws_resols = [0.5, 1, 2, 5]
     wd_resols = [10, 30, 60, 90]
 
-    for r_ws in ws_resols:
-        if r_ws == 0.5:
-            fit_mc(ws_resol=r_ws)
+    # for r_ws in ws_resols:
+    #     if r_ws == 0.5:
+    #         fit_mc(ws_resol=r_ws)
 
-    # for r_wd in wd_resols:
-    #     if r_wd == 30:
-    #         fit_mc(wd_resol=r_wd)
+    for r_wd in wd_resols:
+        if r_wd == 30:
+            fit_mc(wd_resol=r_wd)
