@@ -57,14 +57,14 @@ def init_setup(wind_turbine_index: int = 1):
     WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
     WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
     WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
-    SIMULATION_RESOLUTION = 10
-    SIMULATION_TRACES = 6_000_000
+    SIMULATION_RESOLUTION = 1
+    SIMULATION_TRACES = 100_000
     SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
 
     del wind_turbines, wind_speed, wind_speed_std
 
 
-init_setup()
+init_setup(0)
 FIXED_MFR_PC = globals()['FIXED_MFR_PC']
 THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']  # type: WT
 MOB = globals()['MOB']
@@ -432,12 +432,13 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
     def get_results():
         # Initialise Wind instance
         _simulated_pout = []
+        sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol()
         for this_ws, this_ws_std in tqdm(zip(WIND_SPEED_RANGE, wind_speed_std_range), total=len(WIND_SPEED_RANGE)):
             wind = Wind(this_ws, this_ws_std)
             high_resol_wind = wind.simulate_transient_wind_speed_time_series(
                 resolution=SIMULATION_RESOLUTION,
                 traces_number_for_each_recording=SIMULATION_TRACES,
-                sigma_func=wind.learn_transition_by_looking_at_actual_high_resol()
+                sigma_func=sigma_func
             )
             template = UncertaintyDataFrame.init_from_template(
                 columns_number=len(high_resol_wind),
@@ -653,10 +654,10 @@ def sasa_using_fitted_pc_to_simulate(wind_turbine_obj=None):
 if __name__ == "__main__":
     # cc = sasa_combine_upper_and_lower()
     # sasa_using_fitted_pc_to_simulate()
-
+    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.12", "mean"))
     # %% Draft codes
     # for j in set(range(6)) - {1}:
     #     init_setup(j)
     #     print(THIS_WIND_TURBINE.obj_name)
     #     all_combinations_check()
-    sasa_high_resol_check()
+    # sasa_high_resol_check()

@@ -30,3 +30,11 @@ samples = gm2.sample(1)
 mvn = tfd.MultivariateNormalDiag(
     loc=[1., -1],
     scale_diag=[1, 2.])
+
+gm3 = tfd.MixtureSameFamily(
+    mixture_distribution=tfd.Categorical(
+        probs=[0.3, 0.7]),
+    components_distribution=tfd.LogitNormal(
+        loc=[-1., 1],  # One for each component.
+        scale=[0.1, 0.5]))
+

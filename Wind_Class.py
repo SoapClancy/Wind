@@ -15,6 +15,8 @@ from tensorflow_probability.python.util.seed_stream import SeedStream
 from tensorflow_probability.python.internal import dtype_util
 import getpass
 
+tfd = eval("tfp.distributions")
+
 
 def celsius_to_kelvin(celsius):
     """
@@ -199,14 +201,14 @@ class Wind:
 
     @property
     def transient_distribution(self):
-        distribution = tfp.distributions.TruncatedNormal(loc=self.wind_speed,
-                                                         scale=self.wind_speed_std,
-                                                         low=0.,
-                                                         high=70.)
+        distribution = tfd.TruncatedNormal(loc=self.wind_speed,
+                                           scale=self.wind_speed_std,
+                                           low=0.,
+                                           high=70.)
         return distribution
 
     @staticmethod
-    def learn_transition_by_looking_at_actual_high_resol() -> Callable:
+    def learn_transition_by_looking_at_actual_high_resol(resol: int = 1) -> Callable:
         """
         This function is to look at the actual WS measurements from North Harris
         :return:
@@ -241,7 +243,7 @@ class Wind:
             # Aggregate to 10 seconds
             this_reading_usable = this_file_pd['V50']
             this_reading_usable.index = pd_date_time_index
-            this_reading_usable = this_reading_usable.resample("3S").mean()
+            this_reading_usable = this_reading_usable.resample(f"{resol}S").mean()
             actual_high_resol_wind_speed.append(this_reading_usable)
         # Analysis through pure Numpy
         actual_high_resol_wind_speed = np.concatenate(actual_high_resol_wind_speed)

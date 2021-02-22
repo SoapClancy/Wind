@@ -1,15 +1,11 @@
 from WT_WF_Class import WF, WT
 import pandas as pd
 from project_utils import *
-import numpy as np
-from numpy import ndarray
-import datetime
-import re
+
 from scipy.io import loadmat
-import os
-from pathlib import Path
+
 from Ploting.fast_plot_Func import *
-from TimeSeries_Class import TimeSeries, merge_two_time_series_df
+from TimeSeries_Class import TimeSeries
 import re
 from File_Management.path_and_file_management_Func import *
 from File_Management.load_save_Func import *
@@ -24,6 +20,7 @@ from Writting import *
 from Writting.utils import put_picture_into_a_docx
 from collections import OrderedDict
 from pandasql import sqldf
+from Data_Preprocessing.TruncatedOrCircularToLinear_Class import CircularToLinear
 
 
 def pysqldf(q):
@@ -199,6 +196,28 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
 # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 # return_val = wind_farm[wind_farm_name]
 # return_val_df = return_val.pd_view()
+
+
+def load_dalry_wind_farm_toy() -> WF:
+    data_folder = project_path_ / Path(r"Data\Results\Forecasting\DalryWFToy\\")
+
+    @load_exist_pkl_file_otherwise_run_and_save(data_folder / Path(r"Dalry Hourly.pkl"))
+    def func():
+        csv_data = pd.read_csv(data_folder / Path("Dalry Hourly.csv"))
+        csv_data.set_index("time",  inplace=True)
+        csv_data.index = pd.to_datetime(csv_data.index)
+        csv_data["wind direction"] = CircularToLinear(360).inverse_transform(
+            *csv_data[["wind direction sin", "wind direction cos"]].values.T)
+
+        return csv_data
+
+    data = func()
+    wf_obj = WF(rated_active_power_output=18_000, number_of_wind_turbine=6,
+                obj_name="dalry wind farm toy",
+                predictor_names=("wind speed", "air density", "wind direction"),
+                dependant_names=("active power output",),
+                data=data)  # type: WF
+    return wf_obj
 
 
 def convert_datetime_str_in_txt_to_datetime64(ts: ndarray, from_: str = 'txt'):
@@ -570,7 +589,7 @@ if __name__ == '__main__':
 
     # hi = load_high_resol_for_averaging_effects_analysis(load_all_wind_turbines=True)
     # check_possible_hysteresis_rules()
-    load_dalry_wind_farm_met_mast()
+    # load_dalry_wind_farm_toy()
     # %% SQL practice
     # df_1 = load_weather_data()
     # sql_str = """
