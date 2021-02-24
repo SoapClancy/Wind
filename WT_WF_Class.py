@@ -7,7 +7,7 @@ from File_Management.load_save_Func import *
 from BivariateAnalysis_Class import BivariateOutlier, Bivariate, MethodOfBins
 from File_Management.path_and_file_management_Func import try_to_find_folder_path_otherwise_make_one, try_to_find_file
 from UnivariateAnalysis_Class import CategoryUnivariate, UnivariatePDFOrCDFLike, UnivariateGaussianMixtureModel, \
-    DeterministicUnivariateProbabilisticModel
+    DeterministicUnivariateProbabilisticModel, OneDimensionBinnedData
 from typing import Union, Tuple, List, Iterable, Sequence
 from BivariateAnalysis_Class import Bivariate, MethodOfBins
 from Ploting.fast_plot_Func import *
@@ -38,7 +38,6 @@ from parse import parse
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from HighDimensionalAnalysis_Class import OneDimensionBinnedData
 
 
 class WTandWFBase(PhysicalInstanceDataFrame):
@@ -152,7 +151,7 @@ class WT(WTandWFBase):
 
     @property
     def default_results_saving_path(self):
-        criteria = "Criteria_1p5_sigma"
+        criteria = "Criteria_95pct"
         "Criteria_95pct"
         "Criteria_3_sigma"
         "Criteria_1p5_sigma"

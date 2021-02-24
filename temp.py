@@ -5,6 +5,7 @@ import tensorflow as tf
 from Ploting.fast_plot_Func import *
 import tensorflow_probability as tfp
 import edward2 as ed
+from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
 
 tfd = eval("tfp.distributions")
 tfpl = eval("tfp.layers")
@@ -38,3 +39,24 @@ gm3 = tfd.MixtureSameFamily(
         loc=[-1., 1],  # One for each component.
         scale=[0.1, 0.5]))
 
+joint = tfd.JointDistributionSequential([
+    tfd.Independent(tfd.Exponential(rate=[100, 120]), 1,
+                    name="e"
+                    ),  # e
+    lambda e: tfd.Gamma(concentration=e[..., 0], rate=e[..., 1],
+                        name="g"
+                        ),  # g
+    tfd.Normal(loc=0, scale=2.,
+               # name="my_n"
+               ),  # n
+    lambda n, g: tfd.Normal(loc=n, scale=g,
+                            # name="my_m"
+                            ),  # m
+    lambda m: tfd.Sample(tfd.Bernoulli(logits=m), 12,
+                         name="my_x"
+                         )  # x
+])
+joint.resolve_graph()
+
+X = np.array([[1, 2], [1, 4], [1, 0], [4, 2], [12, 4], [10, 7]])
+bgm = BayesianGaussianMixture(n_components=10, random_state=42).fit(X)
