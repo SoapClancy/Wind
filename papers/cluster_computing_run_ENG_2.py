@@ -6,7 +6,7 @@ cwd = Path().cwd()
 spec = spec_from_file_location("TSE2020", cwd / 'TSE_SI_2020/operating_regime_data_prepare.py')
 foo = module_from_spec(spec)
 spec.loader.exec_module(foo)
-foo.get_zelengrad_operating_regime_estimation()
+foo.get_vostane_kamensko_operating_regime_estimation()
 """
 if __name__ == '__main__':
     exec(source_code)

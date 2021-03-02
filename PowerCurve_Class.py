@@ -23,6 +23,7 @@ from ErrorEvaluation_Class import DeterministicError
 from Ploting.adjust_Func import *
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, StrOneDimensionNdarray, OneDimensionNdarray
 from parse import *
+from BivariateAnalysis_Class import MethodOfBins
 
 
 class PowerCurve(metaclass=ABCMeta):
@@ -796,24 +797,27 @@ class PowerCurveFittedBy5PLF(PowerCurveFittedBy8PLF):
 
 
 class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
-    __slots__ = ("total_wind_turbine_number", "index")
+    __slots__ = ("total_wind_turbine_number", "index", "wind_farm_ts_freq_minutes")
 
-    def __init__(self, *args, total_wind_turbine_number: int, index=None, **kwargs):
+    def __init__(self, *args, total_wind_turbine_number: int, index=None,
+                 wind_farm_ts_freq_minutes: int = None,
+                 **kwargs):
         super().__init__(*args, interp_for_high_resol=False, **kwargs)
         # To make life easy, the constraints are set using Mfr PC fitting experience
         constraints = dict(
             [
                 ('a', [1 - float_eps, 1 + float_eps]),
                 ('d', [-float_eps, float_eps]),
-                ('b_1', [-15., -7.5]),
-                ('c_1', [10., 15.]),
+                ('b_1', [-15., -6.]),
+                ('c_1', [8., 15.]),
                 ('g_1', [float_eps, 0.6]),
-                ('b_2', [0., 100.]),
-                ('c_2', [20., 30.]),
-                ('g_2', [float_eps, 2]),
+                ('b_2', [0., 60.]),
+                ('c_2', [18., 30.]),
+                ('g_2', [float_eps, 4.]),
             ]
         )
         constraints = OrderedDict([(this_param, constraints[this_param]) for this_param in self.ordered_params])
+        self.wind_farm_ts_freq_minutes = wind_farm_ts_freq_minutes  # Must be used if MLE is called
         self._params_constraints = constraints  # type: OrderedDict
         self.total_wind_turbine_number = total_wind_turbine_number
         self.index = index
@@ -1053,7 +1057,8 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
 
         # %% To find the flat power output in the Pout-WS 2D scatter plot
         flat_power_output_mask = self.wind_farm_eq_obj.data_category_is_linearity(
-            '30T',
+            # Note this assumes freq is accessible. i.e., the index is equally spaced datetime-like
+            f"{self.wind_farm_ts_freq_minutes * 6}T",
             constant_error={'active power output': 0.00001}
         )
 
@@ -1075,10 +1080,14 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         temp = []
         for i in range(diff.shape[1]):
             temp.append(np.argwhere(diff[:, i] < 0)[0, 0])
+        # diff
+        # expected_rated_power_output_in_operating_regime
+        # self.active_power_output_recording[ws_above_limit_mask]
+        # self.wind_speed_recording[ws_above_limit_mask]
         ws_above_limit_regime = np.full(ws_above_limit_mask.shape, fill_value=np.nan)
         ws_above_limit_regime[ws_above_limit_mask] = temp
-        if task == 'evaluate':
-            ws_above_limit_regime[self.active_power_output_recording <= 0.0125] = 0  # Correction for all shut down
+        # if task == 'evaluate':
+        #     ws_above_limit_regime[self.active_power_output_recording <= 0.0125] = 0  # Correction for all shut down
         return (possible_normally_operating_wind_turbine,
                 expected_rated_power_output_in_operating_regime,
                 pd.Series(total_pout_when_curtail, index=self.index),
@@ -1091,13 +1100,16 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                                                                      return_fancy: bool = False,
                                                                      task: str = 'fit'):
         power_output_func = power_output_func or super(EquivalentWindFarmPowerCurve, self).__call__
+        # ax = scatter(*self.wind_farm_eq_obj.values.T)
+        # ax = series(np.arange(0, 30, 0.1), power_output_func(np.arange(0, 30, 0.1)), ax=ax, color='red')
+
         initialisation = initialisation or self.mle_initialisation(task)
         possible_normally_operating_wind_turbine = initialisation[0]
         expected_rated_power_output_in_operating_regime = initialisation[1]
         total_pout_when_curtail_values = initialisation[2].values
         curtailment_happen_mask = initialisation[3]
-        ws_above_limit_mask = initialisation[4]
-        ws_above_limit_regime = initialisation[5]
+        # ws_above_limit_mask = initialisation[4]
+        # ws_above_limit_regime = initialisation[5]
 
         # %% Find the closest normally operating WTs if no WT curtailment
         power_output = power_output_func(self.wind_speed_recording)
@@ -1106,10 +1118,11 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         abs_diff = np.abs(self.active_power_output_recording - power_output_scaled)
         normally_operating_number = np.argmin(abs_diff, axis=0)
         del power_output, power_output_scaled, abs_diff
+        # scatter(*self.wind_farm_eq_obj[normally_operating_number == 16].values.T)
 
         # %% Reassign when it is operating regime when WS > WS_cut_out and flat but there is not curtailment
-        ws_above_limit_no_curt_mask = np.bitwise_and(ws_above_limit_mask, ~curtailment_happen_mask)
-        normally_operating_number[ws_above_limit_no_curt_mask] = ws_above_limit_regime[ws_above_limit_no_curt_mask]
+        # ws_above_limit_no_curt_mask = np.bitwise_and(ws_above_limit_mask, ~curtailment_happen_mask)
+        # normally_operating_number[ws_above_limit_no_curt_mask] = ws_above_limit_regime[ws_above_limit_no_curt_mask]
 
         # %% Reassign normally operating WTs when there is curtailment
         diff = (total_pout_when_curtail_values[curtailment_happen_mask] -
@@ -1184,9 +1197,24 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         assert ~(np.isnan(attention_weights).any())
         initialisation = self.mle_initialisation('fit')
 
+        # Regularisation
+        reg_mob = MethodOfBins(self.wind_speed_recording, self.active_power_output_recording,
+                               bin_step=0.5)
+        reg_mob_x = reg_mob.array_of_bin_boundary[:, 1]
+        reg_mob_y_max = reg_mob.cal_mob_statistic_eg_quantile(statistic=[0.975], behaviour='deprecated')[:, 1]
+        not_nan = ~np.isnan(reg_mob_y_max)
+        reg_mob_y_max_update = reg_mob_y_max[not_nan]
+
+        reg_mob_y_min = reg_mob.cal_mob_statistic_eg_quantile(statistic=[0.025], behaviour='deprecated')[:, 1]
+        reg_mob_y_min[reg_mob_x > 25] = 0
+        reg_mob_y_min_update = reg_mob_y_min[not_nan]
+
         def func(params_array):
             model_output = self.call_static_func()(wind_speed, *(params_array[:self.params.__len__()]))
-            mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(initialisation=initialisation)
+            # mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(initialisation=initialisation)
+            mle = self.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                initialisation=self.mle_initialisation('fit')
+            )
             scale_fact = mle[0]['normally_operating_number']
             model_output *= (scale_fact / self.total_wind_turbine_number)
             # focal loss
@@ -1199,7 +1227,19 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
                 focal_index = np.full(error.shape, True)
             # attention weights, importance
             error *= attention_weights
-            return float(np.sqrt(np.mean(error[np.bitwise_and(focal_index, ~mle[-2])] ** 2)))
+            error = float(np.sqrt(np.mean(error[np.bitwise_and(focal_index, ~mle[-2])] ** 2)))
+            # Regularisation
+            reg_model_output = self.call_static_func()(reg_mob_x[not_nan], *(params_array[:self.params.__len__()]))
+            _exceed_mask = reg_model_output > reg_mob_y_max_update
+            reg_error = (reg_model_output[_exceed_mask] - reg_mob_y_max_update[_exceed_mask])
+
+            # if reg_error.shape[0] != 0:
+            #     error += wind_speed.shape[0] // reg_error.shape[0] * np.mean(reg_error)
+
+            _smaller_mask = reg_model_output < reg_mob_y_min_update
+            reg_error2 = (reg_mob_y_min_update[_smaller_mask] - reg_model_output[_smaller_mask])
+
+            return error
 
         return func
 
@@ -1267,7 +1307,7 @@ class EquivalentWindFarmPowerCurve(PowerCurveFittedBy8PLF):
         # dynamical loss func
         loss_func = self._loss_func(wind_speed,
                                     focal_error=focal_error,
-                                    target=target)
+                                    target=target)  # type: Callable
         # %% Init GA obj
         default_algorithm_param = Signature.from_callable(ga.__init__).parameters['algorithm_parameters'].default
         ga_algorithm_param = dict(ChainMap(ga_algorithm_param, default_algorithm_param))

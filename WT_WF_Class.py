@@ -143,6 +143,13 @@ class WTandWFBase(PhysicalInstanceDataFrame):
             self.insert(self.shape[1], column='air density', value=air_density)
             return air_density
 
+    def clip_active_power_output(self):
+        low_mask = self.loc[:, 'active power output'].values <= 0
+        self.loc[low_mask, 'active power output'] = float_eps
+
+        high_mask = self.loc[:, 'active power output'].values >= self.rated_active_power_output
+        self.loc[high_mask, 'active power output'] = (1. - float_eps) * self.rated_active_power_output
+
 
 class WT(WTandWFBase):
 
@@ -1215,8 +1222,9 @@ class WF(WTandWFBase):
         outlier_mask = np.bitwise_or(out_of_range_outlier_mask, linear_outlier_mask)
         return outlier_mask
 
-    def operating_regime_detector(self, task: str = 'load') -> Tuple[EquivalentWindFarmPowerCurve, DataCategoryData]:
-        assert (task in ('load', 'fit')), "'Task' is not in ('load', 'fit')"
+    def operating_regime_detector(self, task: str = 'load', ts_freq_minutes: int = None, *,
+                                  load_with_new_params: dict = None):
+        assert (task in ('load', 'fit', 'load raw')), "'Task' is not in ('load', 'fit', 'load raw')"
         pc_file_path = self.default_results_saving_path["fully operating regime power curve single senor"]
         operating_regime_file_path = self.default_results_saving_path["operating regime single senor"]
 
@@ -1224,13 +1232,15 @@ class WF(WTandWFBase):
         if task == 'fit':
             num_mask = np.bitwise_and(~np.isnan(self['wind speed'].values),
                                       ~np.isnan(self['active power output'].values))
+            assert ts_freq_minutes is not None
         else:
             num_mask = np.full_like(self['wind speed'].values, fill_value=True).astype(bool)
         wf_pc_obj = EquivalentWindFarmPowerCurve(
             total_wind_turbine_number=self.number_of_wind_turbine,
             wind_speed_recording=self['wind speed'].values[num_mask],
             active_power_output_recording=self['active power output'].values[num_mask] / self.rated_active_power_output,
-            index=self.index[num_mask]
+            index=self.index[num_mask],
+            wind_farm_ts_freq_minutes=ts_freq_minutes
         )
         # If there are any fitting results in the saving path, then they can be used as initials
         if try_to_find_file(pc_file_path):
@@ -1238,7 +1248,23 @@ class WF(WTandWFBase):
             wf_pc_obj.update_params(*current_best[:wf_pc_obj.params.__len__()])  # The last the best
             params_init_scheme = 'self'
         else:
-            params_init_scheme = 'guess'
+            # Use prior params
+            wf_pc_obj.update_params(*np.array([1., 0., -8.302, 12.188,
+                                               0.326, 25.1, 24.5, 1.8]))
+            params_init_scheme = 'self'
+        #  ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓DEBUG↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+        # input("Press to continue DEBUG")
+        # DEBUG_VAR = wf_pc_obj.corresponding_8p_pc_obj
+        #
+        # DEBUG_VAR.b_1 = -9.
+        # DEBUG_VAR.c_1 = 10.6
+        # DEBUG_VAR.g_1 = 0.30
+        # DEBUG_VAR.update_params(*DEBUG_VAR.params)
+        #
+        # input("Press to update wf_pc_obj")
+        # wf_pc_obj.update_params(*DEBUG_VAR.params)
+        #  ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑DEBUG↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+
         if task == 'fit':
             wf_pc_obj.fit(
                 ga_algorithm_param={'max_num_iteration': 10,
@@ -1248,17 +1274,43 @@ class WF(WTandWFBase):
                 run_n_times=10000000,
                 save_to_file_path=pc_file_path,
                 focal_error=0.001,
-                function_timeout=6000
+                function_timeout=6000,
             )
 
         else:
             print(f"best found = {wf_pc_obj}")
+            if load_with_new_params is not None:
+                old_params = wf_pc_obj.params_ordered_dict
+                old_params.update(load_with_new_params)
+                wf_pc_obj.update_params(**old_params)
+                #  ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓DEBUG↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                # wf_pc_obj.b_1 = -9.
+                # wf_pc_obj.c_1 = 10.6
+                # wf_pc_obj.g_1 = 0.30
+                # operating_regime = wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime(
+                #     task='evaluate',
+                #     return_fancy=True
+                # )
+                # self.plot()
+                #
+                # ax = wf_pc_obj.corresponding_8p_pc_obj.plot(color='g')
+                # self.plot(operating_regime=operating_regime[-1], not_show_color_bar=True, ax=ax)
+                # self[operating_regime[-1]('S1')].plot()
+                # self[operating_regime[-1]('S2')].plot()
+                # self[operating_regime[-1]('S3')].plot()
+            #  ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑DEBUG↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
             operating_regime = wf_pc_obj.maximum_likelihood_estimation_for_wind_farm_operation_regime(
                 task='evaluate',
                 return_fancy=True
-            )[-1]
-            save_pkl_file(operating_regime_file_path, operating_regime)
-            return wf_pc_obj, operating_regime
+            )
+            # self[operating_regime[-1]('S1')].plot(plot_scatter_pc=True)
+            # self[operating_regime[-1]('S2')].plot(plot_scatter_pc=True)
+            # self[operating_regime[-1]('S3')].plot(plot_scatter_pc=True)
+            if task == 'load':
+                save_pkl_file(operating_regime_file_path, operating_regime[-1])
+                return wf_pc_obj, operating_regime[-1]
+            else:
+                return operating_regime
 
     def resample_and_also_resample_operating_regime(self,
                                                     resample_args: tuple = ('10T',),
@@ -1315,6 +1367,17 @@ class WF(WTandWFBase):
             return resampled_self, resampled_operating_regime
 
         return func()
+
+    def init_assuming_all_fully_operating(self, ts_freq_minutes) -> WF:
+        obj = copy.deepcopy(self)
+        obj.obj_name = "".join([self.obj_name, '_assuming_all_fully_operating'])
+        real_operating_regime_raw = self.operating_regime_detector('load raw', ts_freq_minutes)
+
+        pout = obj['active power output'].values
+        pout = (real_operating_regime_raw[1].values +
+                pout * self.number_of_wind_turbine / real_operating_regime_raw[0]['normally_operating_number'])
+        obj.loc[:, 'active power output'] = pout
+        return obj
 
     def plot(self, *,
              ax=None,

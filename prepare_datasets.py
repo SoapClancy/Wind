@@ -21,6 +21,7 @@ from Writting.utils import put_picture_into_a_docx
 from collections import OrderedDict
 from pandasql import sqldf
 from Data_Preprocessing.TruncatedOrCircularToLinear_Class import CircularToLinear
+from BivariateAnalysis_Class import BivariateOutlier, MethodOfBins
 
 
 def pysqldf(q):
@@ -42,30 +43,146 @@ Croatia_WF_LOCATION_MAPPER = {
     'VelikaPopina': (44.270, 16.010, 919.0),
     'Vratarusa': (45.050, 14.930, 700.0),
     'Zelengrad': (44.125, 15.738, 484.6),
+    'Vostane_Kamensko': (43.631944, 16.883889, None),
+    'Glunca': (43.639444, 16.098611, None)
 }
 
-ws_pout_only = False
+WF_RATED_POUT_MAPPER = {
+    'Benkovac': 9.2,
+    'Bruska': 36.,
+    'Jelinak': 30,
+    'Katuni': 34.2,
+    'Lukovac': 48.,
+    'Ogorje': 42,
+    'Pometenobrdo': 17.5,  # ###########please check
+    'Ponikve': 36.8,  # ###########please check
+    'Rudine': 34.2,
+    'VelikaGlava': 43.,
+    'VelikaPopina': 9.2,
+    'Vratarusa': 42,
+    'Zelengrad': 42,
+    'Vostane_Kamensko': 40,
+    'Glunca': 20.7,
+}
+
+NUMBER_OF_WT_MAPPER = {
+    'Benkovac': 4,
+    'Bruska': 16,
+    'Jelinak': 20,
+    'Katuni': 12,
+    'Lukovac': 16,
+    'Ogorje': None,
+    'Pometenobrdo': None,  # ###########please check
+    'Ponikve': None,  # ###########please check
+    'Rudine': None,
+    'VelikaGlava': 19,
+    'VelikaPopina': None,
+    'Vratarusa': None,
+    'Zelengrad': 14,
+    'Vostane_Kamensko': 14,
+    'Glunca': 9,
+    'Zelengrad': 14,
+}
+
+WF_TO_CLUSTER_MAPPER = {
+    'Bruska': 'Zadar',
+    'Benkovac': 'Zadar',
+    'Zelengrad': 'Zadar',
+
+    'Katuni': 'Split',
+    'Lukovac': 'Split',
+    'Vostane_Kamensko': 'Split',
+
+    'Glunca': 'Sibenik',
+    'Jelinak': 'Sibenik',
+    'VelikaGlava': 'Sibenik',
+}
+
+CLUSTER_TO_WF_MAPPER = {
+    cluster: [] for cluster in set(WF_TO_CLUSTER_MAPPER.values())
+}
+
+for cluster in CLUSTER_TO_WF_MAPPER:
+    if CLUSTER_TO_WF_MAPPER[cluster].__len__() == 0:
+        for key, val in WF_TO_CLUSTER_MAPPER.items():
+            if val == cluster:
+                CLUSTER_TO_WF_MAPPER[cluster].append(key)
+
+del cluster
+
+
+def load_croatia_data_tse_si_2020(cluster_name: str, wind_farm_name: str) -> WF:
+    dir_path = Croatia_RAW_DATA_PATH.parent / r"05_data_prepared"
+    assert cluster_name in ('Sibenik', 'Split', 'Zadar')
+
+    file_name = wind_farm_name
+    if file_name == 'Bruska':
+        file_name = 'Bruska(ZD2_ZD3)'
+    elif file_name == 'Benkovac':
+        file_name = 'Benkovac(ZD4)'
+    file_path = dir_path / ' '.join([cluster_name, 'cluster']) / '.'.join([file_name, 'csv'])
+
+    reading = pd.read_csv(file_path)
+    reading.index = pd.DatetimeIndex(
+        pd.to_datetime(
+            reading.iloc[:, 1],
+            # format='%Y-%m-%d %H:%M:%S'
+        )
+    )
+    reading.drop(reading.columns[[0, 1]], axis=1, inplace=True)
+
+    reading.rename(columns={'WS': 'wind speed', 'POWER': 'active power output'},
+                   errors='raise',
+                   inplace=True)
+    wf_obj = WF(
+        data=reading,
+        obj_name=f'{cluster_name} cluster {wind_farm_name} WF',
+        rated_active_power_output=WF_RATED_POUT_MAPPER[wind_farm_name],
+        predictor_names=('wind speed',),
+        dependant_names=('active power output',),
+        number_of_wind_turbine=NUMBER_OF_WT_MAPPER[wind_farm_name],
+    )
+    # %% Clip
+    wf_obj.loc[:, 'active power output'] = np.clip(
+        wf_obj.loc[:, 'active power output'].values,
+        0.,
+        wf_obj.rated_active_power_output
+    )
+    # %% outlier
+    mask = wf_obj.data_category_inside_boundary(
+        {
+            'wind speed': [0, 0.5],
+            'active power output': [0, np.inf]
+        }
+    )
+    wf_obj.loc[mask] = np.nan
+    mask = wf_obj.data_category_inside_boundary(
+        {
+            'wind speed': [-np.inf, 0],
+        }
+    )
+    wf_obj.loc[mask] = np.nan
+    for ws in np.arange(0, 5, 0.1):
+        mask = wf_obj.data_category_inside_boundary(
+            {
+                'wind speed': [ws, ws + 0.1],
+                'active power output': [0.12 * ws * wf_obj.rated_active_power_output, np.inf]
+            }
+        )
+        wf_obj.loc[mask] = np.nan
+    # mob outlier
+    # mask = MethodOfBins(predictor_var=wf_obj['wind speed'].values,
+    #                     dependent_var=wf_obj['active power output'].values,
+    #                     bin_step=0.5).identify_interquartile_outliers()
+    # wf_obj.loc[mask] = np.nan
+
+    return wf_obj
 
 
 # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True) -> OrderedDict:
     wind_farm = OrderedDict()
     # WF rated power mapper
-    wf_rated_power_mapper = {
-        'Benkovac': 9.2,
-        'Bruska': 36.8,
-        'Jelinak': 30,
-        'Katuni': 34.2,
-        'Lukovac': 48.75,
-        'Ogorje': 42,
-        'Pometenobrdo': 17.5,  # ###########please check
-        'Ponikve': 36.8,  # ###########please check
-        'Rudine': 34.2,
-        'VelikaGlava': 43.7,
-        'VelikaPopina': 9.2,
-        'Vratarusa': 42,
-        'Zelengrad': 42,
-    }
 
     for dir_name, subdir_list, file_list in os.walk(Croatia_RAW_DATA_PATH):
         if subdir_list:
@@ -141,7 +258,7 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
         wind_farm[wind_farm_name] = WF(
             wind_farm_basic,
             obj_name=f'{wind_farm_name} WF',
-            rated_active_power_output=wf_rated_power_mapper[wind_farm_name],
+            rated_active_power_output=WF_RATED_POUT_MAPPER[wind_farm_name],
             predictor_names=('wind speed',),
             dependant_names=('active power output',)
         )
@@ -172,7 +289,7 @@ def load_croatia_data(this_wind_farm_name: str = None, ws_pout_only: bool = True
         # ]
         # for range_i, this_mask in enumerate(wd_range_mask):
         #     scatter(ws[this_mask],
-        #             this_wind_farm['active power output'].values[this_mask] / wf_rated_power_mapper[wind_farm_name],
+        #             this_wind_farm['active power output'].values[this_mask] / WF_RATED_POUT_MAPPER[wind_farm_name],
         #             color='royalblue',
         #             x_label='Wind Speed [m/s]',
         #             x_lim=(-0.5, 33.5),
@@ -204,7 +321,7 @@ def load_dalry_wind_farm_toy() -> WF:
     @load_exist_pkl_file_otherwise_run_and_save(data_folder / Path(r"Dalry Hourly.pkl"))
     def func():
         csv_data = pd.read_csv(data_folder / Path("Dalry Hourly.csv"))
-        csv_data.set_index("time",  inplace=True)
+        csv_data.set_index("time", inplace=True)
         csv_data.index = pd.to_datetime(csv_data.index)
         csv_data["wind direction"] = CircularToLinear(360).inverse_transform(
             *csv_data[["wind direction sin", "wind direction cos"]].values.T)
