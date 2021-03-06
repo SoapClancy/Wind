@@ -3,10 +3,10 @@ from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 
 cwd = Path().cwd()
-spec = spec_from_file_location("TSE2020", cwd / 'TSE_SI_2020/operating_regime_data_prepare.py')
+spec = spec_from_file_location("TSE_SI_2020", cwd / 'TSE_SI_2020/stage_1.py')
 foo = module_from_spec(spec)
 spec.loader.exec_module(foo)
-foo.get_zelengrad_operating_regime_estimation()
+foo.test_nn_model('Zelengrad', 'EveryThing', ensemble_size=3000)
 """
 if __name__ == '__main__':
     exec(source_code)

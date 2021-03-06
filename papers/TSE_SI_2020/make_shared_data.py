@@ -73,7 +73,7 @@ def make_one_cluster(cluster_name):
     # get test period
     cluster_full_data = reduce(lambda a, b: pd.merge(a, b, how='left', left_index=True, right_index=True), readings)
     test_periods = get_test_period_own_ok(cluster_full_data)
-    save_pkl_file(shared_dir / Path("./test_periods.pkl"), test_periods)
+    save_pkl_file(shared_dir / Path(f"./{cluster_name} cluster test_periods.pkl"), test_periods)
 
     # get training sets sample count
     training_sets_sample_available = {wf_name: 0 for wf_name in test_periods.keys()}
@@ -85,7 +85,8 @@ def make_one_cluster(cluster_name):
         )
         print(f"{wf_name} training_set_sample_available = {training_sets_sample_available[wf_name]}")
     print("=" * 64 + "\n")
-    save_pkl_file(shared_dir / Path("./training_sets_sample_available.pkl"), training_sets_sample_available)
+    save_pkl_file(shared_dir / Path(f"./{cluster_name} cluster training_sets_sample_available.pkl"),
+                  training_sets_sample_available)
 
     # only the case when both training and test ok are considered
     for pro in ("all", 'training', 'test'):
@@ -114,6 +115,7 @@ def make_one_cluster(cluster_name):
     }
     with open(shared_dir / "meta_data.json", 'w') as json_file:
         json.dump(json_obj, json_file)
+
 
 def make_shared_data():
     for cluster in CLUSTER_TO_WF_MAPPER.keys():

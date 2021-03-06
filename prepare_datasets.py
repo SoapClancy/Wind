@@ -110,6 +110,15 @@ for cluster in CLUSTER_TO_WF_MAPPER:
 
 del cluster
 
+AVAILABLE_WF_NAMES = [
+    'Glunca',
+    'Jelinak',
+    'Katuni',
+    'Lukovac',
+    'Bruska',
+    'Zelengrad'
+]
+
 
 def load_croatia_data_tse_si_2020(cluster_name: str, wind_farm_name: str) -> WF:
     dir_path = Croatia_RAW_DATA_PATH.parent / r"05_data_prepared"
