@@ -1,0 +1,303 @@
+from Ploting.fast_plot_Func import *
+from project_utils import *
+import numpy as np
+import datetime
+from WT_WF_Class import WF
+from File_Management.path_and_file_management_Func import *
+from File_Management.load_save_Func import *
+import copy
+from Correlation_Modeling.Copula_Class import VineGMCMCopula, FOUR_DIM_CVINE_CONSTRUCTION
+from papers.TSE_SI_2020.stage_1 import get_natural_resources_or_opr_or_copula_data
+from prepare_datasets import WF_RATED_POUT_MAPPER, NUMBER_OF_WT_MAPPER, CLUSTER_TO_WF_MAPPER, WF_TO_CLUSTER_MAPPER, \
+    Croatia_WF_LOCATION_MAPPER
+from PowerCurve_Class import PowerCurveByMethodOfBins
+from BivariateAnalysis_Class import MethodOfBins
+from Filtering.sklearn_novelty_and_outlier_detection_Func import use_isolation_forest
+import pandas as pd
+from UnivariateAnalysis_Class import DeterministicUnivariateProbabilisticModel, UnivariatePDFOrCDFLike
+
+WS_REGION = {
+    'Glunca': [2., 16., 25.],
+    'Jelinak': [1., 18.5, 26.5],
+    'Zelengrad': [2., 18.3, 27.3],
+    'Bruska': [2.2, 18., 26.5],
+    'Lukovac': [2.0, 17.0, 26.5],
+    'Katuni': [2., 17., 26.5]
+}
+
+
+class WindFarmDataSet:
+    def __init__(self, *args, wind_farm: WF,
+                 # operating_regime: DataCategoryData,
+                 **kwargs):
+        assert isinstance(wind_farm, WF)
+        # assert isinstance(operating_regime, DataCategoryData)
+        wind_farm_extended = self._down_sampling_to_one_hour(wind_farm)
+        wind_farm_extended = self._expand_feature_dim_for_month_and_operating_regime(wind_farm_extended)
+        super().__init__(*args,
+                         original_data_set=wind_farm_extended,
+                         **kwargs)
+
+    @staticmethod
+    def _expand_feature_dim_for_month_and_operating_regime(wind_farm):
+        wind_farm['month'] = wind_farm.index.month
+        return wind_farm
+
+    @staticmethod
+    def _down_sampling_to_one_hour(wind_farm):
+        wind_farm_extended = copy.deepcopy(wind_farm.pd_view()).astype(float)
+        wind_farm_extended = wind_farm_extended.resample('60T').mean()
+        return wind_farm_extended
+
+
+def _set_ws_region(wind_farm_name):
+    wf_obj_full, wf_obj = get_data(wind_farm_name, 'training')
+    # wf_obj_full.plot(plot_scatter_pc=True)
+
+    if wind_farm_name in WS_REGION:
+        masks = [np.bitwise_and(wf_obj_full['wind speed'].values >= WS_REGION[wind_farm_name][0],
+                                wf_obj_full['wind speed'].values < WS_REGION[wind_farm_name][1]),
+                 np.bitwise_and(wf_obj_full['wind speed'].values >= WS_REGION[wind_farm_name][1],
+                                wf_obj_full['wind speed'].values < WS_REGION[wind_farm_name][2])]
+        for mask in masks:
+            wf_obj_full[mask].plot(plot_scatter_pc=True)
+
+
+def get_data(wind_farm_name: str, task: str) -> Tuple[WF, WF]:
+    assert task in ("training", "test")
+
+    #
+    wf_obj = get_natural_resources_or_opr_or_copula_data(wind_farm_name, task, res_name='Copula')
+    wf_obj = wf_obj.reindex(['active power output',
+                             'wind speed',
+                             'air density',
+                             'wind direction',
+                             'normally operating number'], axis=1)
+
+    mask = wf_obj['normally operating number'].values == NUMBER_OF_WT_MAPPER[wind_farm_name]
+    wf_obj_full = wf_obj.loc[mask, ['active power output', 'wind speed', 'air density', 'wind direction']]
+
+    if task == 'training':
+        if wind_farm_name == 'Glunca':
+            temp = (0, 97)
+        elif wind_farm_name == 'Jelinak':
+            temp = (0, 67)
+        elif wind_farm_name == 'Zelengrad':
+            temp = (0, 90)
+        elif wind_farm_name == 'Bruska':
+            temp = (0, 95)
+        elif wind_farm_name == 'Lukovac':
+            temp = (0, 100)
+        else:
+            temp = (0, 97)
+
+        outlier_mask = MethodOfBins(predictor_var=wf_obj_full['wind speed'].values,
+                                    dependent_var=wf_obj_full['active power output'].values,
+                                    bin_step=0.5).identify_percentile_outlier(*temp)
+        # wf_obj_full.plot(title='before remove', plot_scatter_pc=True)
+        # wf_obj_full.loc[~outlier_mask].plot(title='IF remove', plot_scatter_pc=True)
+        wf_obj_full.loc[outlier_mask] = np.nan
+        # wf_obj_full.plot(title='remove DONE', plot_scatter_pc=True)
+
+        #
+        # wf_obj_full.plot(title='wf_obj_full to return', plot_scatter_pc=True)
+        # wf_obj[wf_obj['normally operating number'].values == NUMBER_OF_WT_MAPPER[wind_farm_name] - 1].plot(title='-1')
+        # wf_obj.plot(title='wf_obj to return')
+
+    return wf_obj_full, wf_obj
+
+
+def get_model(wind_farm_name: str, task: str):
+    assert task in ("training", "test")
+    folder_path = project_path_ / Path(rf"Data\Results\4d_cvine_gmcm_model\{wind_farm_name}\\")
+    folder_path_left = folder_path / 'left'
+    folder_path_right = folder_path / 'right'
+
+    if task == "test":
+        assert try_to_find_file(folder_path_left / Path('./marginal_training.pkl'))
+        assert try_to_find_file(folder_path_right / Path('./marginal_training.pkl'))
+
+    try_to_find_folder_path_otherwise_make_one(folder_path_left)
+    try_to_find_folder_path_otherwise_make_one(folder_path_right)
+
+    data = get_data(wind_farm_name, task)[0]
+    left_mask = np.bitwise_and(data['wind speed'].values >= WS_REGION[wind_farm_name][0],
+                               data['wind speed'].values < WS_REGION[wind_farm_name][1])
+    right_mask = np.bitwise_and(data['wind speed'].values >= WS_REGION[wind_farm_name][1],
+                                data['wind speed'].values < WS_REGION[wind_farm_name][2])
+
+    vine_gmcm_copula_left = VineGMCMCopula(
+        data[left_mask].values,
+        construction=FOUR_DIM_CVINE_CONSTRUCTION,
+        gmcm_model_folder_for_construction_path_=folder_path_left,
+        marginal_distribution_file_=folder_path_left / Path('marginal_training.pkl')
+    )
+    vine_gmcm_copula_right = VineGMCMCopula(
+        data[right_mask].values,
+        construction=FOUR_DIM_CVINE_CONSTRUCTION,
+        gmcm_model_folder_for_construction_path_=folder_path_right,
+        marginal_distribution_file_=folder_path_right / Path('marginal_training.pkl')
+    )
+    # for j in range(4):
+    #     hist(vine_gmcm_copula_left.ndarray_data[:, j])
+    #     hist(vine_gmcm_copula_left.ndarray_data_in_uniform[:, j])
+
+    return vine_gmcm_copula_left, vine_gmcm_copula_right
+
+
+def train_model(wind_farm_name: str):
+    _model_left, _model_right = get_model(wind_farm_name, "training")
+    # only_at_edge_idx = None
+    only_at_edge_idx = 5
+    gmcm_fitting_attempt = 2
+
+    _model = _model_right
+
+    _model.fit(only_at_edge_idx=only_at_edge_idx, gmcm_fitting_attempt=gmcm_fitting_attempt)
+
+    return _model_left, _model_right
+
+
+def get_copula_outputs(wind_farm_name: str,
+                       copula_model_left: VineGMCMCopula,
+                       copula_model_right: VineGMCMCopula, *,
+                       copula_inputs: pd.DataFrame,
+                       linspace_number: int):
+    assert list(copula_inputs.columns) == ["wind speed", "air density", "wind direction"]
+
+    # divide by region
+    left_copula_inputs = []
+    right_copula_inputs = []
+
+    use_zero_idx = []
+    use_left_idx = []
+    use_right_idx = []
+
+    for i in range(copula_inputs.shape[0]):
+        if copula_inputs.iloc[i]['wind speed'] < WS_REGION[wind_farm_name][0]:
+            use_zero_idx.append(i)
+        elif copula_inputs.iloc[i]['wind speed'] < WS_REGION[wind_farm_name][1]:
+            use_left_idx.append(i)
+            left_copula_inputs.append(list(copula_inputs.iloc[i].values))
+        elif copula_inputs.iloc[i]['wind speed'] < WS_REGION[wind_farm_name][2]:
+            use_right_idx.append(i)
+            right_copula_inputs.append(list(copula_inputs.iloc[i].values))
+        else:
+            use_zero_idx.append(i)
+    left_copula_inputs = np.array(left_copula_inputs)
+    right_copula_inputs = np.array(right_copula_inputs)
+
+    left_copula_pred, right_copula_pred = None, None
+    if left_copula_inputs.__len__() != 0:
+        # expand_dim
+        left_copula_inputs = np.concatenate((np.full((left_copula_inputs.shape[0], 1), np.nan),
+                                             left_copula_inputs), axis=1)
+        # run copula
+        left_copula_pred = copula_model_left.cal_conditional_pdf_unnormalised(ndarray_data_like=left_copula_inputs,
+                                                                              linspace_number=linspace_number)
+    if right_copula_inputs.__len__() != 0:
+        right_copula_inputs = np.concatenate((np.full((right_copula_inputs.shape[0], 1), np.nan),
+                                              right_copula_inputs), axis=1)
+
+        right_copula_pred = copula_model_right.cal_conditional_pdf_unnormalised(ndarray_data_like=right_copula_inputs,
+                                                                                linspace_number=linspace_number)
+
+    # merge results
+    conditional_pdfs = []
+    temp_a = 0
+    temp_b = 0
+    for i in range(copula_inputs.shape[0]):
+        if i in use_zero_idx:
+            conditional_pdfs.append(DeterministicUnivariateProbabilisticModel(0.))
+        elif i in use_left_idx:
+            conditional_pdfs.append(left_copula_pred[temp_a])
+            temp_a += 1
+        else:
+            conditional_pdfs.append(right_copula_pred[temp_b])
+            temp_b += 1
+
+    return conditional_pdfs
+
+
+def transform_copula_conditional_pdfs(wind_farm_name: str, copula_outputs: list, normally_operating_number: ndarray):
+    assert copula_outputs.__len__() == normally_operating_number.__len__()
+    assert normally_operating_number.ndim == 1
+
+    transformed_dist_list = []
+    for i in range(copula_outputs.__len__()):
+        scale_factor = normally_operating_number[i] / NUMBER_OF_WT_MAPPER[wind_farm_name]
+        transformed_dist = copula_outputs[i]
+        if type(transformed_dist) == UnivariatePDFOrCDFLike:
+            pdf_like_ndarray = transformed_dist.pdf_like_ndarray
+            pdf_like_ndarray[:, 1] *= scale_factor
+            transformed_dist = UnivariatePDFOrCDFLike(
+                pdf_like_ndarray=pdf_like_ndarray  # Call the constructor, make sure every renormalisation works
+            )
+
+        transformed_dist_list.append(transformed_dist)
+
+    return transformed_dist_list
+
+
+def test_model(wind_farm_name: str):
+    # Get data
+    test_data = get_data(wind_farm_name, "test")[1]
+    test_data = test_data.iloc[test_data.shape[0] // 2:]
+    # Build and get model
+    vine_gmcm_copula_left, vine_gmcm_copula_right = get_model(wind_farm_name, "test")
+    # run model
+    copula_outputs = get_copula_outputs(wind_farm_name,
+                                        copula_model_left=vine_gmcm_copula_left,
+                                        copula_model_right=vine_gmcm_copula_right,
+                                        copula_inputs=test_data[['wind speed', 'air density', 'wind direction']],
+                                        linspace_number=500)
+
+    # transform
+    copula_outputs = transform_copula_conditional_pdfs(wind_farm_name,
+                                                       copula_outputs,
+                                                       test_data['normally operating number'].values.flatten())
+
+    # Plot
+    pred_mean = []
+    pred_2p5 = []
+    pred_97p5 = []
+    for pred_pdf in copula_outputs:
+        pred_mean.append(pred_pdf.mean_)
+        pred_2p5.append(pred_pdf.find_nearest_inverse_cdf(0.025))
+        pred_97p5.append(pred_pdf.find_nearest_inverse_cdf(0.975))
+    ax = series(x=test_data.index, y=pred_mean, label="Mean", figure_size=(10, 2.4),
+                x_axis_format='%m-%d %H')
+    ax = series(test_data.index, test_data.iloc[:, 0].values.flatten(),
+                color="r", label="True", ax=ax)
+    ax = series(test_data.index, pred_2p5, linestyle="--",
+                color="g", label="2.5 - 97.5 percentiles", ax=ax)
+    ax = series(test_data.index, pred_97p5, linestyle="--",
+                color="g", ax=ax,
+                x_label="Time index [Hour]", y_label=f"{wind_farm_name} Power Output\n[MW]")
+
+
+if __name__ == "__main__":
+    # _set_ws_region("Glunca")
+    # _set_ws_region("Jelinak")
+    # _set_ws_region("Zelengrad")
+    # _set_ws_region("Bruska")
+    # _set_ws_region("Lukovac")
+    # _set_ws_region("Katuni")
+
+    # train_model("Glunca")
+    # test_model("Glunca")
+
+    # train_model("Jelinak")
+    test_model("Jelinak")
+
+    # train_model("Zelengrad")
+    # test_model("Zelengrad")
+
+    # train_model("Bruska")
+    # test_model("Bruska")
+
+    # train_model("Lukovac")
+    # test_model("Lukovac")
+
+    # train_model("Katuni")
+    # test_model("Katuni")
