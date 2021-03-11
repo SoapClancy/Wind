@@ -86,16 +86,16 @@ NUMBER_OF_WT_MAPPER = {
 
 WF_TO_CLUSTER_MAPPER = {
     'Bruska': 'Zadar',
-    'Benkovac': 'Zadar',
+    # 'Benkovac': 'Zadar',
     'Zelengrad': 'Zadar',
 
     'Katuni': 'Split',
     'Lukovac': 'Split',
-    'Vostane_Kamensko': 'Split',
+    # 'Vostane_Kamensko': 'Split',
 
     'Glunca': 'Sibenik',
     'Jelinak': 'Sibenik',
-    'VelikaGlava': 'Sibenik',
+    # 'VelikaGlava': 'Sibenik',
 }
 
 CLUSTER_TO_WF_MAPPER = {
@@ -111,12 +111,13 @@ for cluster in CLUSTER_TO_WF_MAPPER:
 del cluster
 
 AVAILABLE_WF_NAMES = [
-    'Glunca',
-    'Jelinak',
+    'Bruska',
+    'Zelengrad',
     'Katuni',
     'Lukovac',
-    'Bruska',
-    'Zelengrad'
+    'Glunca',
+    'Jelinak'
+
 ]
 
 
