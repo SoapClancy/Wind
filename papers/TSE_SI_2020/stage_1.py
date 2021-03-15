@@ -45,6 +45,9 @@ tfp_math = eval("tfp.math")
 
 tf.keras.backend.set_floatx('float32')
 
+PRED_BY = "median"
+assert PRED_BY in {"mean", "median"}
+
 BATCH_SIZE = 25000
 SHARED_DIR_PATH = project_path_ / r"Data\Raw_measurements\TSE_SI_2020_WF\shared_data"
 IMPUTE_INDIVIDUAL_DATA_PATH = project_path_ / r"Data\Results\Forecasting\impute_data\individual"
@@ -64,15 +67,17 @@ class EveryThingDataSet(DeepLearningDataSet):
         if use_corr_impute == '':
             predictor_cols = ('wind speed', 'air density', 'wind direction',)
             dependant_cols = ('wind speed', 'air density', 'wind direction',)
+            quantile_transformed_col = ('wind speed', 'air density', 'wind direction',)
         else:
             predictor_cols = list(data.columns)
             # N.B. WD is before AD, not good for Copula, but be transposed in test phase
             dependant_cols = [x for x in data.columns if geo_loc in x]
+            quantile_transformed_col = tuple(list(data.columns))
         super().__init__(
             *args,
             original_data_set=data,
 
-            quantile_transformed_col=tuple(list(data.columns)),
+            quantile_transformed_col=quantile_transformed_col,
 
             predictor_cols=tuple(predictor_cols),
             dependant_cols=tuple(dependant_cols),
@@ -313,7 +318,7 @@ def train_nn_model(geo_loc: str, res_name, *, use_corr_impute: str, continue_tra
             if epoch % 150 == 0:
                 model.save_weights(NN_MODEL_PATH / f'{geo_loc}/{res_name}{use_corr_impute}/epoch_{epoch}.h5')
 
-    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=5000)
+    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=50000)
 
     # Compile model
     if res_name == 'EveryThing':
@@ -412,12 +417,14 @@ def test_nn_model(geo_loc: str, res_name: str, ensemble_size: int = 3000, *,
     temp = load_pkl_file(save_path / "test_set_predictions.pkl")
     for j in range(temp['test_samples_y_inv'].shape[-1]):
         ax = series(temp['test_samples_y_inv'][:, 0, j], color='red')
-        ax = series(np.mean(temp['prediction_results_inv'], axis=0)[:, 0, j], ax=ax, color='royalblue')
+        if PRED_BY == 'mean':
+            ax = series(np.mean(temp['prediction_results_inv'], axis=0)[:, 0, j], ax=ax, color='royalblue')
+        else:
+            ax = series(np.median(temp['prediction_results_inv'], axis=0)[:, 0, j], ax=ax, color='royalblue')
         series(temp['prediction_results_inv'][:300, :, 0, j].T, color='grey', linewidth=0.5, ax=ax, alpha=0.1,
                zorder=-1)
 
         ax = series(temp['test_samples_y_inv'][:, 0, j], color='red')
-        ax = series(np.mean(temp['prediction_results_inv'], axis=0)[:, 0, j], ax=ax, color='royalblue')
         ax = series(np.percentile(temp['prediction_results_inv'], 2.5, axis=0)[:, 0, j], ax=ax,
                     color='green', linestyle='--')
         series(np.percentile(temp['prediction_results_inv'], 97.5, axis=0)[:, 0, j], ax=ax,
@@ -498,7 +505,7 @@ def plot_opr_results(wf_name: str):
     step(np.arange(0, 168), actual.flatten(), color='red', ax=ax,
          linestyle='-.', linewidth=1.2, alpha=0.95, label='Actual')
     step(np.arange(0, 168), stats.mode(np.squeeze(preds)).mode.flatten(), ax=ax,
-         color='royalblue', linewidth=1.2, alpha=0.95, label='Mode')
+         color='royalblue', linewidth=1.2, alpha=0.95, label='Pred.')
     plt.grid(True, color='gold', alpha=0.25)
     ax = adjust_legend_in_ax(ax, protocol='Outside center right')
 
@@ -514,7 +521,8 @@ def cal_natural_resources_errors(wf_name: str):
 
     cols = ['WS', 'AD', 'WD_cos', 'WD_sin']
 
-    for now_use_corr_impute in use_corr_impute:
+    for i, now_use_corr_impute in enumerate(use_corr_impute):
+
         pred_natural_resources = get_natural_resources_results(wf_name, now_use_corr_impute)
         actual = pred_natural_resources['test_samples_y_inv']
         preds = pred_natural_resources['prediction_results_inv']
@@ -524,21 +532,25 @@ def cal_natural_resources_errors(wf_name: str):
                 dist_objs = [UnivariatePDFOrCDFLike.init_from_samples_by_ecdf(x)
                              for x in np.cos(np.deg2rad(preds[:, :, 0, 2].T))]
                 target = np.cos(np.deg2rad(actual[:, 0, 2]))
+                name = 'WD'
             elif now_col == 'WD_sin':
                 dist_objs = [UnivariatePDFOrCDFLike.init_from_samples_by_ecdf(x)
                              for x in np.sin(np.deg2rad(preds[:, :, 0, 2].T))]
                 target = np.sin(np.deg2rad(actual[:, 0, 2]))
+                name = 'WD'
             else:
                 dist_objs = [UnivariatePDFOrCDFLike.init_from_samples_by_ecdf(x) for x in preds[:, :, 0, j].T]
                 target = actual[:, 0, j]
+                name = now_col
 
             temp = cal_continuous_var_error(target=target,
-                                            model_output=dist_objs)
+                                            model_output=dist_objs,
+                                            name=name)
             if now_use_corr_impute == '':
                 ans_dict["own"][now_col] = temp
             else:
                 ans_dict["cluster"][now_col] = temp
-        tt = 1
+
     for val in ans_dict.values():
         val['WD'] = {}
         for ele in ('mae', 'rmse', 'pinball_loss', 'crps'):
@@ -590,7 +602,7 @@ def cal_opr_errors(wf_name: str):
 
 
 if __name__ == "__main__":
-    # train_nn_model("Glunca", 'EveryThing', continue_training=False)
+    # train_nn_model("Glunca", 'EveryThing', continue_training=True, use_corr_impute='')
     # train_nn_model('Glunca', 'OPR', continue_training=False)
 
     # train_nn_model("Jelinak", 'EveryThing', continue_training=True)
@@ -602,40 +614,33 @@ if __name__ == "__main__":
     # train_nn_model("Bruska", 'EveryThing', continue_training=False)
     # train_nn_model("Bruska", 'OPR', continue_training=False)
 
-    # train_nn_model("Lukovac", 'EveryThing', continue_training=False)  # TODO NEW
+    # train_nn_model("Lukovac", 'EveryThing', continue_training=False, use_corr_impute='')
     # train_nn_model("Lukovac", 'OPR', continue_training=True)
 
-    # train_nn_model("Katuni", 'EveryThing', continue_training=False) # TODO NEW
+    # train_nn_model("Katuni", 'EveryThing', continue_training=False, use_corr_impute='')
     # train_nn_model("Katuni", 'OPR', continue_training=True, use_corr_impute='')
 
     pass
-    train_nn_model("Glunca", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')  # TODO 进行中
+    # train_nn_model("Glunca", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
     # train_nn_model("Jelinak", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
 
-    # train_nn_model("Zelengrad", 'EveryThing', continue_training=False, use_corr_impute='_cluster_')  # TODO NEW
+    # train_nn_model("Zelengrad", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
     # train_nn_model("Bruska", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
 
-    # train_nn_model("Lukovac", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')  # TODO 只训了3小时
+    # train_nn_model("Lukovac", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
     # train_nn_model("Katuni", 'EveryThing', continue_training=True, use_corr_impute='_cluster_')
 
     pass
-    # train_nn_model("Glunca", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-    # train_nn_model("Jelinak", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-
-    # train_nn_model("Zelengrad", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-    # train_nn_model("Bruska", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-
-    # train_nn_model("Lukovac", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-    # train_nn_model("Katuni", 'EveryThing', continue_training=False, use_corr_impute='_all_')  # TODO 以后
-
-    pass
-    # test_nn_model('Bruska', 'EveryThing', ensemble_size=3000, use_corr_impute='_cluster_')
-    # plot_natural_resources_results('Bruska', '')
-    # plot_opr_results('Bruska')
-
-    # cal_natural_resources_errors('Bruska')
-    # cal_natural_resources_errors('Jelinak')
+    # get_natural_resources_or_opr_or_copula_data('Katuni', 'training', use_corr_impute='', res_name='EveryThing')
+    # test_nn_model('Glunca', 'EveryThing', ensemble_size=3000, use_corr_impute='_cluster_')
+    for final_name in AVAILABLE_WF_NAMES:
+        # plot_natural_resources_results(final_name, '')
+        # plot_natural_resources_results(final_name, '_cluster_')
+        # plot_opr_results(final_name)
+        cal_natural_resources_errors(final_name)
+    # cal_natural_resources_errors('Glunca')
+    # cal_natural_resources_errors('Lukovac')
 
     # for now_wf in AVAILABLE_WF_NAMES:
-    #     # plot_opr_results(now_wf)
+    #     plot_opr_results(now_wf)
     #     print(f"{now_wf} cross_entropy = {cal_opr_errors(now_wf):.3f}")

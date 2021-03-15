@@ -21,10 +21,15 @@ from papers.TSE_SI_2020.utils import preds_continuous_var_plot, cal_continuous_v
 from ErrorEvaluation_Class import EnergyBasedError
 from collections import ChainMap
 
+PRED_BY = "median"
+assert PRED_BY in {"mean", "median"}
+
 WS_REGION = {
     'Glunca': [2., 16., 25.],
     'Jelinak': [1., 18.5, 26.5],
-    'Zelengrad': [2., 18.3, 27.3],
+    # 'Zelengrad': [2., 18.3, 27.3],
+    'Zelengrad': [2., 19.5, 27.3],
+
     'Bruska': [2.2, 18., 26.5],
     # 'Bruska': [2.2, 20., 26.5],
     'Lukovac': [2.0, 17.0, 26.5],
@@ -86,7 +91,7 @@ def get_data(wind_farm_name: str, task: str) -> Tuple[WF, WF]:
 
     if task == 'training':
         if wind_farm_name == 'Glunca':
-            temp = (0, 97)
+            temp = (0, 100)
         elif wind_farm_name == 'Jelinak':
             temp = (0, 67)
         elif wind_farm_name == 'Zelengrad':
@@ -155,13 +160,13 @@ def get_model(wind_farm_name: str, task: str):
 def train_model(wind_farm_name: str):
     _model_left, _model_right = get_model(wind_farm_name, "training")
     # only_at_edge_idx = None
-    only_at_edge_idx = 1
+    only_at_edge_idx = 5
     gmcm_fitting_attempt = 3
 
     _model = _model_right
 
     _model.fit(only_at_edge_idx=only_at_edge_idx, gmcm_fitting_attempt=gmcm_fitting_attempt,
-               # gmcm_fitting_k=4
+               gmcm_fitting_k=2
                )
 
     return _model_left, _model_right
@@ -302,6 +307,8 @@ def test_model(wind_farm_name: str):
     #     pred_mean.append(pred_pdf.mean_)
     #     pred_2p5.append(pred_pdf.find_nearest_inverse_cdf(0.025))
     #     pred_97p5.append(pred_pdf.find_nearest_inverse_cdf(0.975))
+    # series(x=test_data.index, y=test_data.iloc[:, 1].values.flatten(), label="Mean", figure_size=(10, 2.4),
+    #        x_axis_format='%m-%d %H')
     # ax = series(x=test_data.index, y=pred_mean, label="Mean", figure_size=(10, 2.4),
     #             x_axis_format='%m-%d %H')
     # ax = series(test_data.index, test_data.iloc[:, 0].values.flatten(),
@@ -322,12 +329,20 @@ def test_model(wind_farm_name: str):
     temp = turn_preds_into_univariate_pdf_or_cdf_like(wind_farm_name, preds=np.array(temp), per_unitise=True)
     error = cal_continuous_var_error(
         target=test_data.iloc[:, 0].values.flatten() / WF_RATED_POUT_MAPPER[wind_farm_name],
-        model_output=temp
+        model_output=temp,
+        name='Pout'
     )
-    energy_error = EnergyBasedError(target=test_data.iloc[:, 0].values.flatten(),
-                                    model_output=np.array([x.mean_ for x in copula_outputs]),
-                                    time_step=1.)
-    energy_error_val = energy_error.do_calculation()
+    if PRED_BY == 'mean':
+        energy_error = EnergyBasedError(target=test_data.iloc[:, 0].values.flatten(),
+                                        model_output=np.array([x.mean_ for x in copula_outputs]),
+                                        time_step=1.)
+    else:
+        energy_error = EnergyBasedError(target=test_data.iloc[:, 0].values.flatten(),
+                                        model_output=np.array([x.cal_median_val() for x in copula_outputs]),
+                                        time_step=1.)
+    energy_error_val = energy_error.do_calculation(
+        drop_keys=('target_total_when_over', 'target_total_when_under', 'target_total')
+    )
 
     print(f"Finished {wind_farm_name} ")
     print(error)
@@ -366,7 +381,7 @@ if __name__ == "__main__":
 
     # train_model("Zelengrad")
     # test_model("Zelengrad")
-
+    #
     # train_model("Bruska")
     # test_model("Bruska")
     # _test_data = get_data('Bruska', "test")[1].iloc[168:].pd_view()

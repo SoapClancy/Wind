@@ -11,8 +11,12 @@ from prepare_datasets import WF_RATED_POUT_MAPPER, NUMBER_OF_WT_MAPPER, CLUSTER_
 from project_utils import *
 import copy
 from pycircstat.descriptive import mean as circle_mean
+from pycircstat.descriptive import median as circle_median
 from pycircstat.descriptive import percentile as circle_pct
 from UnivariateAnalysis_Class import UnivariatePDFOrCDFLike
+
+PRED_BY = "median"
+assert PRED_BY in {"mean", "median"}
 
 
 def turn_preds_into_univariate_pdf_or_cdf_like(wf_name: str, preds, *, per_unitise: bool):
@@ -62,7 +66,10 @@ def preds_continuous_var_plot(wf_name: str, *,
                            q=np.arange(0, 100 + 1 / 3000 * 100, 1 / 3000 * 100),
                            q0=0)
             )
-            uct_df.iloc[-2, j] = np.rad2deg(circle_mean(np.deg2rad(preds_samples[j])))
+            if PRED_BY == 'mean':
+                uct_df.iloc[-2, j] = np.rad2deg(circle_mean(np.deg2rad(preds_samples[j])))
+            else:
+                uct_df.iloc[-2, j] = np.rad2deg(circle_median(np.deg2rad(preds_samples[j])))
 
     ax = plot_from_uncertainty_like_dataframe(
         x=np.arange(preds_samples.shape[0]),
@@ -80,22 +87,41 @@ def preds_continuous_var_plot(wf_name: str, *,
     )
     ax = series(target_pout, color='red', ax=ax,
                 linestyle='-.', linewidth=1.2, alpha=0.95, label='Actual')
-    ax = series(uct_df.loc['mean'].values.flatten(), ax=ax, color='royalblue', linewidth=1.2, alpha=0.95, label='Mean')
+    if PRED_BY == 'mean':
+        ax = series(uct_df.loc['mean'].values.flatten(), ax=ax, color='royalblue', linewidth=1.2, alpha=0.95,
+                    label='Pred.')
+    else:
+        ax = series(uct_df(by_percentile=50.).flatten(), ax=ax, color='royalblue', linewidth=1.2, alpha=0.95,
+                    label='Pred.')
 
     ax = adjust_legend_in_ax(ax, protocol='Outside center right')
     return ax
 
 
-def cal_continuous_var_error(target, model_output):
+def cal_continuous_var_error(target, model_output: List[UnivariatePDFOrCDFLike], *, name: str):
     assert len(target) == len(model_output)
-    deter_error = DeterministicError(target=target,
-                                     model_output=[x.mean_ for x in model_output])
+    assert name in {'WS', 'AD', 'WD', 'Pout'}
+    if PRED_BY == 'mean':
+        deter_error = DeterministicError(target=target,
+                                         model_output=[x.mean_ for x in model_output])
+    else:
+        deter_error = DeterministicError(target=target,
+                                         model_output=[x.cal_median_val() for x in model_output])
     mae = deter_error.cal_mean_absolute_error()
     rmse = deter_error.cal_root_mean_square_error()
 
+    if name == 'WS':
+        integral_boundary = [-float_eps, 35 + float_eps]
+    elif name == 'AD':
+        integral_boundary = [0.9, 1.6]
+    elif name == 'WD':  # Actually the sin or cos outputs
+        integral_boundary = [-1 - float_eps, 1 + float_eps]
+    else:
+        integral_boundary = [-float_eps, 1 + float_eps]
+
     prob_error = ProbabilisticError(target=target,
                                     model_output=model_output)
-    crps = prob_error.cal_continuous_ranked_probability_score([-float_eps, 1 + float_eps])
+    crps = prob_error.cal_continuous_ranked_probability_score(integral_boundary=integral_boundary)
     pinball_loss = prob_error.cal_pinball_loss()
 
     return {
