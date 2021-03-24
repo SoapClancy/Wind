@@ -9,7 +9,7 @@ spec.loader.exec_module(foo)
 i = 6
 j = 17
 m = i * j
-foo.cal_final_results_for_one_wf('Glunca', idx_s=m, idx_e=m + j, use_corr_impute='_cluster_')
+foo.cal_final_results_for_one_wf('Bruska', idx_s=m, idx_e=m + j, use_corr_impute='_cluster_')
 """
 if __name__ == '__main__':
     exec(source_code)

@@ -22,14 +22,14 @@ import copy
 from scipy import stats
 from collections import ChainMap
 
-PRED_BY = "median"
+PRED_BY = "mean"
 assert PRED_BY in {"mean", "median"}
 
 NN_MODEL_PREDICTION_PATH = project_path_ / r"Data\Results\Forecasting\NN_model_predictions"
 COPULA_MODEL_PATH = project_path_ / r'Data\Results\4d_cvine_gmcm_model'
 FINAL_COMBINATION_RESULTS_FOLDER = project_path_ / r"Data\Results\Forecasting\Final_Combination_Results"
 
-COPULA_LINSPACE_NUMBER = 250
+COPULA_LINSPACE_NUMBER = 200
 USE_STAGE_1_SAMPLE_SIZE = 1500
 COMBINATION_SAMPLE_SIZE = 5000
 
@@ -318,11 +318,12 @@ if __name__ == '__main__':
     # plot_stage_1_results('Bruska', use_corr_impute='')
     # plot_stage_1_results('Lukovac', use_corr_impute='_cluster_')
     pass
-    # compare_weather_effects_on_pout('Katuni')
-    # compare_opr_effects_on_pout('Katuni')
+    # compare_opr_effects_on_pout('Bruska')
+    # compare_opr_effects_on_pout('Jelinak')
+    # compare_opr_effects_on_pout('Bruska')
 
-    for hehe in ('Bruska', 'Zelengrad', 'Lukovac', 'Jelinak'):
-        compare_weather_effects_on_pout(hehe)
-        compare_opr_effects_on_pout(hehe)
+    # for hehe in ('Bruska', 'Zelengrad', 'Lukovac', 'Jelinak'):
+    #     compare_weather_effects_on_pout(hehe)
+    #     compare_opr_effects_on_pout(hehe)
     # get_final_results_for_one_wf('Zelengrad', use_corr_impute='', opr='pred_opr')
     # cal_final_results_for_one_wf('Katuni', idx_s=0, idx_e=168, use_corr_impute='')

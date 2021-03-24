@@ -1404,6 +1404,7 @@ class WF(WTandWFBase):
                                                                       plot_mfr=plot_mfr, zorder=-1,
                                                                       color=tuple(color_list[:, 0, :].squeeze()),
                                                                       **kwargs)
+
                 this_operating_regime_mask = operating_regime(this_operating_regime)
                 ax = scatter(self[this_operating_regime_mask]['wind speed'],
                              self[this_operating_regime_mask]['active power output'] / self.rated_active_power_output,

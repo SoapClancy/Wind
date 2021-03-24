@@ -20,8 +20,10 @@ from papers.TSE_SI_2020.utils import preds_continuous_var_plot, cal_continuous_v
     turn_preds_into_univariate_pdf_or_cdf_like
 from ErrorEvaluation_Class import EnergyBasedError
 from collections import ChainMap
+from PowerCurve_Class import PowerCurveByMfr
+from Filtering.OutlierAnalyser_Class import DataCategoryData, DataCategoryNameMapper
 
-PRED_BY = "median"
+PRED_BY = "mean"
 assert PRED_BY in {"mean", "median"}
 
 WS_REGION = {
@@ -74,7 +76,7 @@ def _set_ws_region(wind_farm_name):
             wf_obj_full[mask].plot(plot_scatter_pc=True)
 
 
-def get_data(wind_farm_name: str, task: str) -> Tuple[WF, WF]:
+def get_data(wind_farm_name: str, task: str, force_outlier_filter=False) -> Tuple[WF, WF]:
     assert task in ("training", "test")
 
     #
@@ -89,6 +91,7 @@ def get_data(wind_farm_name: str, task: str) -> Tuple[WF, WF]:
     mask = wf_obj['normally operating number'].values == NUMBER_OF_WT_MAPPER[wind_farm_name]
     wf_obj_full = wf_obj.loc[mask, ['active power output', 'wind speed', 'air density', 'wind direction']]
 
+    force_outlier_filter_idx = None
     if task == 'training':
         if wind_farm_name == 'Glunca':
             temp = (0, 100)
@@ -109,12 +112,16 @@ def get_data(wind_farm_name: str, task: str) -> Tuple[WF, WF]:
         # wf_obj_full.plot(title='before remove', plot_scatter_pc=True)
         # wf_obj_full.loc[~outlier_mask].plot(title='IF remove', plot_scatter_pc=True)
         wf_obj_full.loc[outlier_mask] = np.nan
+
+        force_outlier_filter_idx = wf_obj_full.loc[outlier_mask].index
         # wf_obj_full.plot(title='remove DONE', plot_scatter_pc=True)
 
         #
         # wf_obj_full.plot(title='wf_obj_full to return', plot_scatter_pc=True)
         # wf_obj[wf_obj['normally operating number'].values == NUMBER_OF_WT_MAPPER[wind_farm_name] - 1].plot(title='-1')
         # wf_obj.plot(title='wf_obj to return')
+    if force_outlier_filter:
+        wf_obj.loc[force_outlier_filter_idx] = np.nan
 
     return wf_obj_full, wf_obj
 
@@ -161,12 +168,12 @@ def train_model(wind_farm_name: str):
     _model_left, _model_right = get_model(wind_farm_name, "training")
     # only_at_edge_idx = None
     only_at_edge_idx = 5
-    gmcm_fitting_attempt = 3
+    gmcm_fitting_attempt = 1
 
-    _model = _model_right
+    _model = _model_left
 
     _model.fit(only_at_edge_idx=only_at_edge_idx, gmcm_fitting_attempt=gmcm_fitting_attempt,
-               gmcm_fitting_k=2
+               gmcm_fitting_k=6
                )
 
     return _model_left, _model_right
@@ -361,8 +368,38 @@ def test_all_models():
     errors.to_csv(file_path / "all_wf_copula_errors.csv")
 
 
-def plot_copula_correlation():
-    pass
+def plot_one_wf_with_opr(wind_farm_name):
+    wf_obj = get_data(wind_farm_name, 'training')[1]
+    tt = 1
+
+    abbreviation = []
+    for x in wf_obj.iloc[:, -1].values:
+        if np.isnan(x):
+            x = 0
+        else:
+            x = int(x)
+        abbreviation.append(f"S{NUMBER_OF_WT_MAPPER[wind_farm_name] + 1 - x}")
+    operating_regime_name_mapper = DataCategoryNameMapper.init_from_template()
+
+    for i in range(NUMBER_OF_WT_MAPPER[wind_farm_name] + 1):
+        operating_regime_name_mapper.loc[i] = [str(i),
+                                               f"S{NUMBER_OF_WT_MAPPER[wind_farm_name] + 1 - i}",
+                                               -1,
+                                               '']
+
+    operating_regime = DataCategoryData(
+        abbreviation=abbreviation,
+        index=wf_obj.index,
+        name_mapper=operating_regime_name_mapper
+    )
+    wf_obj.plot(operating_regime=operating_regime,
+                not_show_color_bar=True,
+                title=wind_farm_name)
+
+
+def plot_all_wf_with_opr():
+    for wf in AVAILABLE_WF_NAMES:
+        plot_one_wf_with_opr(wind_farm_name=wf)
 
 
 if __name__ == "__main__":
@@ -393,3 +430,5 @@ if __name__ == "__main__":
     # test_model("Katuni")
     pass
     test_all_models()
+
+    # plot_all_wf_with_opr()

@@ -15,7 +15,7 @@ from pycircstat.descriptive import median as circle_median
 from pycircstat.descriptive import percentile as circle_pct
 from UnivariateAnalysis_Class import UnivariatePDFOrCDFLike
 
-PRED_BY = "median"
+PRED_BY = "mean"
 assert PRED_BY in {"mean", "median"}
 
 
@@ -31,10 +31,12 @@ def turn_preds_into_univariate_pdf_or_cdf_like(wf_name: str, preds, *, per_uniti
 
 
 def preds_continuous_var_plot(wf_name: str, *,
-                              preds_samples: ndarray,
+                              preds_samples: ndarray = None,
+                              uct_df: UncertaintyDataFrame = None,
                               target_pout: ndarray,
                               name: str):
-    assert preds_samples.ndim == 2
+    if preds_samples is not None:
+        assert preds_samples.ndim == 2
     assert target_pout.ndim == 1
     assert name in {'WS', 'AD', 'WD', 'Pout'}
 
@@ -53,10 +55,11 @@ def preds_continuous_var_plot(wf_name: str, *,
         y_lim = WS_POUT_2D_PLOT_KWARGS['y_lim']
 
     # construct uncertainty df
-    uct_df = UncertaintyDataFrame.init_from_template(columns_number=preds_samples.shape[0],
-                                                     percentiles=np.arange(0, 100 + 1 / 3000 * 100, 1 / 3000 * 100))
-    for i in range(preds_samples.shape[0]):
-        uct_df.update_one_column(i, data=preds_samples[i])
+    if uct_df is None:
+        uct_df = UncertaintyDataFrame.init_from_template(columns_number=preds_samples.shape[0],
+                                                         percentiles=np.arange(0, 100 + 1 / 3000 * 100, 1 / 3000 * 100))
+        for i in range(preds_samples.shape[0]):
+            uct_df.update_one_column(i, data=preds_samples[i])
 
     if name == 'WD':
         tt = 1
@@ -66,13 +69,10 @@ def preds_continuous_var_plot(wf_name: str, *,
                            q=np.arange(0, 100 + 1 / 3000 * 100, 1 / 3000 * 100),
                            q0=0)
             )
-            if PRED_BY == 'mean':
-                uct_df.iloc[-2, j] = np.rad2deg(circle_mean(np.deg2rad(preds_samples[j])))
-            else:
-                uct_df.iloc[-2, j] = np.rad2deg(circle_median(np.deg2rad(preds_samples[j])))
+            uct_df.iloc[-2, j] = np.rad2deg(circle_mean(np.deg2rad(preds_samples[j])))
 
     ax = plot_from_uncertainty_like_dataframe(
-        x=np.arange(preds_samples.shape[0]),
+        x=np.arange(uct_df.shape[1]),
         uncertainty_like_dataframe=uct_df,
         lower_half_percentiles=StrOneDimensionNdarray(np.arange(5, 50, 5).astype(str)),
         cmap_name='gray',

@@ -1,3 +1,5 @@
+import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from Ploting.fast_plot_Func import *
 from project_utils import *
 from prepare_datasets import WF_RATED_POUT_MAPPER, NUMBER_OF_WT_MAPPER, CLUSTER_TO_WF_MAPPER, WF_TO_CLUSTER_MAPPER, \
@@ -33,6 +35,7 @@ from Ploting.adjust_Func import *
 from scipy import stats
 from UnivariateAnalysis_Class import ECDF, UnivariatePDFOrCDFLike
 import json
+from scipy.stats import pearsonr, spearmanr, kendalltau
 
 setlocale(LC_ALL, "en_US")
 sns.set()
@@ -45,7 +48,7 @@ tfp_math = eval("tfp.math")
 
 tf.keras.backend.set_floatx('float32')
 
-PRED_BY = "median"
+PRED_BY = "mean"
 assert PRED_BY in {"mean", "median"}
 
 BATCH_SIZE = 25000
@@ -326,7 +329,7 @@ def train_nn_model(geo_loc: str, res_name, *, use_corr_impute: str, continue_tra
     else:
         metrics = ['accuracy']
 
-    model.compile(loss=nll, optimizer=tf.keras.optimizers.RMSprop(), metrics=metrics,
+    model.compile(loss=nll, optimizer=tf.keras.optimizers.Adam(0.00001), metrics=metrics,
                   experimental_run_tf_function=False)
     model.summary()
     _debug_training_data_for_nn = list(training_data_for_nn.as_numpy_iterator())
@@ -589,7 +592,6 @@ def cal_opr_errors(wf_name: str):
     pred_natural_resources = get_opr_results(wf_name)
     actual = pred_natural_resources['test_samples_y_inv']
     preds = pred_natural_resources['prediction_results_inv']
-    tt = 1
     z = np.full((NUMBER_OF_WT_MAPPER[wf_name] + 1, actual.shape[0],), 0, dtype=float)
     for i in range(actual.shape[0]):
         z[:, i] = np.histogram(preds[:, i, 0, 0], np.arange(-0.5, NUMBER_OF_WT_MAPPER[wf_name] + 1))[0] / preds.shape[0]
@@ -598,7 +600,53 @@ def cal_opr_errors(wf_name: str):
     err_val = error(list(actual.flatten().astype(int)),
                     list(z.T),
                     ).numpy()
-    return np.mean(err_val)
+
+    acc = 0
+    for i in range(actual.shape[0]):
+        now_true = int(actual[i, 0, 0])
+        now_pred = preds[:, i, 0, 0].astype(int)
+        # acc += np.sum(now_pred + 1 == now_true)
+        acc += np.sum(np.any([now_pred + x == now_true for x in range(-4, 5, 1)], axis=0))
+
+    return np.mean(err_val), acc / (preds.shape[0] * preds.shape[1])
+
+
+def cal_corr():
+    ans = pd.DataFrame()
+    for name in ['Bruska', 'Jelinak', 'Lukovac']:
+        data, _ = get_natural_resources_or_opr_or_copula_data(name, "training", False,
+                                                              res_name='EveryThing',
+                                                              use_corr_impute='_cluster_')
+        cluster_df = pd.DataFrame()
+        for i in range(3):
+            arr_a = data.data.iloc[:, i].values
+            arr_b = data.data.iloc[:, i + 3].values
+            if i != 1:
+                corr = spearmanr(arr_a, arr_b)
+                coef = corr[0]
+                p_val = corr[1]
+                now_ans = pd.DataFrame(
+                    data=[coef, p_val],
+                    index=[WF_TO_CLUSTER_MAPPER[name]],
+                    columns=[data.data.columns[i] + 'coefficient', data.data.columns[i] + 'p-value']
+                )
+            else:
+                corr = spearmanr(np.cos(np.deg2rad(arr_a)), np.cos(np.deg2rad(arr_b)))
+                coef = corr[0]
+                p_val = corr[1]
+                now_ans = pd.DataFrame(
+                    data=[coef, p_val],
+                    index=[WF_TO_CLUSTER_MAPPER[name]],
+                    columns=['wind direction cos']
+                )
+                corr = spearmanr(np.sin(np.deg2rad(arr_a)), np.sin(np.deg2rad(arr_b)))
+                coef = corr[0]
+                p_val = corr[1]
+                now_ans = pd.DataFrame(
+                    data=[coef, p_val],
+                    index=[WF_TO_CLUSTER_MAPPER[name]],
+                    columns=['wind direction sin']
+                )
 
 
 if __name__ == "__main__":
@@ -606,7 +654,7 @@ if __name__ == "__main__":
     # train_nn_model('Glunca', 'OPR', continue_training=False)
 
     # train_nn_model("Jelinak", 'EveryThing', continue_training=True)
-    # train_nn_model('Jelinak', 'OPR', continue_training=True)
+    # train_nn_model('Jelinak', 'OPR', continue_training=True, use_corr_impute='')
 
     # train_nn_model("Zelengrad", 'EveryThing', continue_training=False)
     # train_nn_model("Zelengrad", 'OPR', continue_training=True)
@@ -633,14 +681,22 @@ if __name__ == "__main__":
     pass
     # get_natural_resources_or_opr_or_copula_data('Katuni', 'training', use_corr_impute='', res_name='EveryThing')
     # test_nn_model('Glunca', 'EveryThing', ensemble_size=3000, use_corr_impute='_cluster_')
-    for final_name in AVAILABLE_WF_NAMES:
-        # plot_natural_resources_results(final_name, '')
-        # plot_natural_resources_results(final_name, '_cluster_')
-        # plot_opr_results(final_name)
-        cal_natural_resources_errors(final_name)
-    # cal_natural_resources_errors('Glunca')
-    # cal_natural_resources_errors('Lukovac')
+    # for final_name in AVAILABLE_WF_NAMES:
+    #     # plot_natural_resources_results(final_name, '')
+    #     # plot_natural_resources_results(final_name, '_cluster_')
+    #     # plot_opr_results(final_name)
+    #     cal_natural_resources_errors(final_name)
 
+    # plot_natural_resources_results('Bruska', '')
+    # plot_natural_resources_results('Bruska', '_cluster_')
+    # cal_natural_resources_errors('Bruska')
+    print(cal_opr_errors('Bruska'))
+    print(cal_opr_errors('Jelinak'))
+    # cal_natural_resources_errors('Lukovac')
+    # plot_opr_results('Jelinak')
+    # print(cal_opr_errors('Jelinak'))
     # for now_wf in AVAILABLE_WF_NAMES:
     #     plot_opr_results(now_wf)
     #     print(f"{now_wf} cross_entropy = {cal_opr_errors(now_wf):.3f}")
+
+    # cal_corr()
