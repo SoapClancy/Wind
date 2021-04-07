@@ -1,3 +1,6 @@
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from PowerCurve_Class import PowerCurveByMfr, PowerCurveFittedBy8PLF
 import pandas as pd
 from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv, \
@@ -30,6 +33,8 @@ import copy
 import matplotlib.pyplot as plt
 from WT_WF_Class import WT
 
+BY_SIGMA = 1.5
+
 
 # %% Global variables
 def init_setup(wind_turbine_index: int = 1):
@@ -45,17 +50,31 @@ def init_setup(wind_turbine_index: int = 1):
     FIXED_MFR_PC = PowerCurveByMfr('1.12')
     # load wind turbine
     wind_turbines = load_raw_wt_from_txt_file_and_temperature_from_csv()
-    THIS_WIND_TURBINE = wind_turbines[wind_turbine_index]
-    # outlier = load_pkl_file(THIS_WIND_TURBINE.default_results_saving_path['outlier'])['DataCategoryData obj']
-    # THIS_WIND_TURBINE = THIS_WIND_TURBINE[~outlier('CAT-III')]
-    # choose wind speed bins and the wind speed std. in each bin
-    wind_speed = THIS_WIND_TURBINE['wind speed'].values
-    wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
+    if wind_turbine_index != -1:
+        THIS_WIND_TURBINE = wind_turbines[wind_turbine_index]
+        # outlier = load_pkl_file(THIS_WIND_TURBINE.default_results_saving_path['outlier'])['DataCategoryData obj']
+        # THIS_WIND_TURBINE = THIS_WIND_TURBINE[~outlier('CAT-III')]
+        # choose wind speed bins and the wind speed std. in each bin
+        wind_speed = THIS_WIND_TURBINE['wind speed'].values
+        wind_speed_std = THIS_WIND_TURBINE['wind speed std.'].values
+    else:
+        THIS_WIND_TURBINE = wind_turbines[wind_turbine_index]
+        THIS_WIND_TURBINE.obj_name = "all6WTsAsInOne"
+        wind_speed, wind_speed_std = [], []
+        for x in wind_turbines:
+            wind_speed.extend(list(x['wind speed'].values))
+            wind_speed_std.extend(list(x['wind speed std.'].values))
+        wind_speed = np.array(wind_speed)
+        wind_speed_std = np.array(wind_speed_std)
+
     MOB = MethodOfBins(wind_speed, wind_speed_std, bin_step=0.5, first_bin_left_boundary=0)
     RANGE_MASK = np.bitwise_and(MOB.array_of_bin_boundary[:, 1] >= 0,
                                 MOB.array_of_bin_boundary[:, 1] <= 29.6)
     WIND_SPEED_RANGE = MOB.cal_mob_statistic_eg_quantile(np.array([1.]))[RANGE_MASK, 0]
     WIND_SPEED_STD_RANGE = MOB.cal_mob_statistic_eg_quantile('mean')[RANGE_MASK, 1]
+    # series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE,
+    #        x_label="Wind Speed Bin [m/s]", y_label="Average Wind Speed Std. [m/s]",
+    #        save_format='svg', save_file_=f"WT{wind_turbine_index + 1}")
     WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
     SIMULATION_RESOLUTION = 1
     SIMULATION_TRACES = 100_000
@@ -64,7 +83,8 @@ def init_setup(wind_turbine_index: int = 1):
     del wind_turbines, wind_speed, wind_speed_std
 
 
-init_setup(0)
+# for i in range(6):
+init_setup(-1)
 FIXED_MFR_PC = globals()['FIXED_MFR_PC']
 THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']  # type: WT
 MOB = globals()['MOB']
@@ -104,25 +124,30 @@ def plot_mfr_pc(_ax, *, mfr_pc_obj=None, **kwargs):
     else:
         raise
     _ax = mfr_pc_obj.plot(**mfr_pc_obj_kwargs,
-                          ax=_ax, mode='discrete')
+                          ax=_ax, mode='discrete', **kwargs)
     return _ax
 
 
-def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, *, mfr_pc_obj=None):
+def uncertainty_plot(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, *, mfr_pc_obj=None, **kwargs):
     _ax = plot_from_uncertainty_like_dataframe(
         WIND_SPEED_RANGE,
         uncertainty_dataframe,
         covert_to_str_one_dimensional_ndarray(
-            np.concatenate(
-                ([0.00001], np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5))
-            ),
-            # np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0], 50, 5),
-            '0.000001'),
+            # np.concatenate(
+            #     ([0.00001], np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0], 50, 5))
+            # ),
+            np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0], 50, 5),
+            '0.001'
+        ),
         ax=_ax,
     )
     # _ax = series(WIND_SPEED_RANGE, (uncertainty_dataframe(68).iloc[0] + uncertainty_dataframe(68).iloc[1]) / 2,
     #              ax=_ax, label='1' + r'$\sigma$' + ' %' + '\nrange mean', color='fuchsia', linestyle='--')
-    return plot_mfr_pc(_ax, mfr_pc_obj=mfr_pc_obj)
+    _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe.loc['mean'].values.flatten(),
+                 ax=_ax, label='Mean', color='fuchsia', linestyle='--')
+    _ax = series(WIND_SPEED_RANGE, uncertainty_dataframe(by_percentile=50).flatten(),
+                 ax=_ax, label='Median', color='orange', linestyle='-')
+    return plot_mfr_pc(_ax, mfr_pc_obj=mfr_pc_obj, **kwargs)
 
 
 def uncertainty_plot_25_75(uncertainty_dataframe: UncertaintyDataFrame, _ax=None, **kwargs):
@@ -411,7 +436,7 @@ def sasa_high_resol_check():
 def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_prod=None,
                                                                          mfr_pc_obj: PowerCurveByMfr = None,
                                                                          do_plot: bool = True,
-                                                                         **kwargs):
+                                                                         name: str = None):
     assert (_this_prod or mfr_pc_obj) is not None
     if _this_prod is not None:
         this_pc = PowerCurveByMfr(_this_prod[0])
@@ -432,9 +457,12 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
     def get_results():
         # Initialise Wind instance
         _simulated_pout = []
-        sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol()
+        sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol(resol=SIMULATION_RESOLUTION)
         for this_ws, this_ws_std in tqdm(zip(WIND_SPEED_RANGE, wind_speed_std_range), total=len(WIND_SPEED_RANGE)):
-            wind = Wind(this_ws, this_ws_std)
+            # if not this_ws > 24.5:
+            #     continue
+            original_resolution = 660
+            wind = Wind(this_ws, this_ws_std, original_resolution=original_resolution)
             high_resol_wind = wind.simulate_transient_wind_speed_time_series(
                 resolution=SIMULATION_RESOLUTION,
                 traces_number_for_each_recording=SIMULATION_TRACES,
@@ -442,8 +470,8 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
             )
             template = UncertaintyDataFrame.init_from_template(
                 columns_number=len(high_resol_wind),
-                # percentiles=np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0],
-                #                       UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] + 1,
+                # percentiles=np.arange(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0],
+                #                       UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[1] + 1,
                 #                       0.001)
                 percentiles=np.arange(0,
                                       100.001,
@@ -452,6 +480,7 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
             this_simulated_pout = this_pc.cal_with_hysteresis_control_using_high_resol_wind(
                 high_resol_wind,
                 return_percentiles=template,
+                discard_prev_num=original_resolution - 600
             )
             this_simulated_pout = this_simulated_pout.rename(columns={0: str(this_ws)})
             _simulated_pout.append(this_simulated_pout)
@@ -460,7 +489,10 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
 
     simulated_pout = get_results()  # type: UncertaintyDataFrame
     if do_plot:
-        return uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc, **kwargs)
+        tt = 1
+        # return uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc, **kwargs)
+        uncertainty_plot(UncertaintyDataFrame(simulated_pout), mfr_pc_obj=this_pc,
+                         save_format='svg', save_file_=f"{name}_{_this_prod}")
     else:
         return UncertaintyDataFrame(simulated_pout)
 
@@ -556,9 +588,9 @@ def demonstration_iec_standard():
 def all_combinations_check():
     # %% 无聊的各种排列组合
     # air_density_list = ('0.97', '1.12', '1.27')
-    # ws_std_list = ([UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0] / 100],
+    # ws_std_list = ([UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0] / 100],
     #                'mean',
-    #                [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1] / 100])
+    #                [UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[1] / 100])
     air_density_list = ('0.97', '1.27')
     ws_std_list = (['mean'])
     prod = list(product(air_density_list, ws_std_list))
@@ -601,11 +633,13 @@ def sasa_combine_upper_and_lower(plot: bool = False, wind_turbine_obj=None) -> U
     combined = UncertaintyDataFrame(index=StrOneDimensionNdarray(['0', '50', '100', 'mean', 'std.']),
                                     columns=lower_uct.columns)
     try:
-        combined.iloc[0] = lower_uct(by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0])
+        combined.iloc[0] = lower_uct(
+            by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0]
+        )
     except ValueError:
         combined.iloc[0] = lower_uct.iloc[0]
     combined.iloc[1] = (lower_uct(by_percentile=50) + upper_uct(by_percentile=50)) / 2
-    combined.iloc[2] = upper_uct(by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[1])
+    combined.iloc[2] = upper_uct(by_percentile=UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[1])
     combined.loc['mean'] = (lower_uct.loc['mean'] + upper_uct.loc['mean']) / 2
 
     if plot:
@@ -619,8 +653,13 @@ def sasa_combine_upper_and_lower(plot: bool = False, wind_turbine_obj=None) -> U
         )
 
         _ax = PowerCurveByMfr('0.97').plot(**MFR_KWARGS[0], mode='discrete', ax=_ax)
-        _ax = PowerCurveByMfr('1.12').plot(**MFR_KWARGS[1], mode='discrete', ax=_ax)
+        # _ax = PowerCurveByMfr('1.12').plot(**MFR_KWARGS[1], mode='discrete', ax=_ax)
         _ax = PowerCurveByMfr('1.27').plot(**MFR_KWARGS[2], mode='discrete', ax=_ax)
+
+        _ax = series(WIND_SPEED_RANGE, combined.loc['mean'].values.flatten(),
+                     ax=_ax, label='Mean', color='fuchsia', linestyle='--')
+        _ax = series(WIND_SPEED_RANGE, combined(by_percentile=50).flatten(),
+                     ax=_ax, label='Median', color='orange', linestyle='-')
     return combined
 
 
@@ -640,7 +679,7 @@ def sasa_using_fitted_pc_to_simulate(wind_turbine_obj=None):
     _ax = plot_from_uncertainty_like_dataframe(
         WIND_SPEED_RANGE,
         uct,
-        StrOneDimensionNdarray([str(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(1.5)[0])]),
+        StrOneDimensionNdarray([str(UncertaintyDataFrame.infer_percentile_boundaries_by_sigma(BY_SIGMA)[0])]),
         facecolor='royalblue',
         alpha=0.5,
         **WS_POUT_2D_PLOT_KWARGS
@@ -652,9 +691,19 @@ def sasa_using_fitted_pc_to_simulate(wind_turbine_obj=None):
 
 
 if __name__ == "__main__":
+    pass
     # cc = sasa_combine_upper_and_lower()
     # sasa_using_fitted_pc_to_simulate()
-    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.12", "mean"))
+    # demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.12", "mean"), name='')
+    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("0.97", "mean"), name='')
+    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.27", "mean"), name='')
+    sasa_combine_upper_and_lower(plot=True)
+    # for ad in ("0.97", "1.27"):
+    #     for j in range(6):
+    #         init_setup(j)
+    #         demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new((ad, "mean"), name=f"WT{j + 1}")
+    # sasa_combine_upper_and_lower(plot=True)
+    # sasa_combine_upper_and_lower(plot=True)
     # %% Draft codes
     # for j in set(range(6)) - {1}:
     #     init_setup(j)

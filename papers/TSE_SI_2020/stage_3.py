@@ -21,6 +21,7 @@ from papers.TSE_SI_2020.utils import preds_continuous_var_plot, turn_preds_into_
 import copy
 from scipy import stats
 from collections import ChainMap
+import scipy.stats
 
 PRED_BY = "mean"
 assert PRED_BY in {"mean", "median"}
@@ -41,6 +42,7 @@ def get_stage_1_results(wf_name: str, use_corr_impute: str):
     pred_opr = load_pkl_file(
         NN_MODEL_PREDICTION_PATH / fr"{wf_name}/OPR/test_set_predictions.pkl"
     )
+
     return pred_natural_resources, pred_opr
 
 
@@ -327,3 +329,4 @@ if __name__ == '__main__':
     #     compare_opr_effects_on_pout(hehe)
     # get_final_results_for_one_wf('Zelengrad', use_corr_impute='', opr='pred_opr')
     # cal_final_results_for_one_wf('Katuni', idx_s=0, idx_e=168, use_corr_impute='')
+    get_stage_1_results('Jelinak', use_corr_impute='_cluster_')

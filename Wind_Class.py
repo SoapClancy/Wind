@@ -169,7 +169,7 @@ class Wind:
                                                             current_state=current_state,
                                                             kernel=tfp.mcmc.RandomWalkMetropolis(
                                                                 this_recording_distribution.log_prob,
-                                                                # new_state_fn=custom_random_walk_normal_fn()
+                                                                new_state_fn=custom_random_walk_normal_fn()
                                                             ),
                                                             # kernel=tfp.mcmc.HamiltonianMonteCarlo(
                                                             #     this_recording_distribution.log_prob,

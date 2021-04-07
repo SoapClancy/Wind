@@ -158,9 +158,10 @@ class WT(WTandWFBase):
 
     @property
     def default_results_saving_path(self):
-        criteria = "Criteria_95pct"
+        criteria = "Criteria_1p5_sigma"
         "Criteria_95pct"
         "Criteria_3_sigma"
+        "Criteria_2_sigma"
         "Criteria_1p5_sigma"
         saving_path = {
             "outlier": self.results_path / f"Filtering/{criteria}/{self.__str__()}/results.pkl",
@@ -273,6 +274,7 @@ class WT(WTandWFBase):
         mfr_pc_obj = PowerCurveByMfr(mfr_pc_densities[0])
         any_update_flag = False
         self.update_air_density_to_last_column()
+        print(f"Total rows to check = {self[others_2_mask].shape[0]}")
         for i, this_recording in tqdm(enumerate(self[others_2_mask].iterrows())):
             this_recording_index = this_recording[0]
             this_recording_ws = this_recording[1]['wind speed']
@@ -338,6 +340,8 @@ class WT(WTandWFBase):
 
             if criteria == 'Criteria_1p5_sigma':
                 based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=1.5).values.flatten()
+            elif criteria == 'Criteria_2_sigma':
+                based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=2).values.flatten()
             elif criteria == 'Criteria_3_sigma':
                 based_pout_sim_low, based_pout_sim_high = this_recording_sim(by_sigma=3).values.flatten()
             elif criteria == 'Criteria_95pct':

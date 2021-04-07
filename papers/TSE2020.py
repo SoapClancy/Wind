@@ -508,7 +508,7 @@ def individual_wind_turbine_outliers_outlier_detector(power_curve_model_task: st
 
             this_wt.outlier_plot()
             # this_wt.outlier_plot(plot_individual=True)
-            this_wt.outlier_report()
+            # this_wt.outlier_report()
 
             # %% Calculate error
             ws = np.arange(0, 28.5 + BIN_WIDTH, BIN_WIDTH)
@@ -939,9 +939,9 @@ if __name__ == '__main__':
     # cat_6_demo()
     # cat_6_demo_time_series()
     # migrate_from_old_wind_turbine_outlier_detection()
-    # individual_wind_turbine_outliers_outlier_detector('load',
-    #                                                   wt_index=tuple(range(6)),
-    #                                                   write_to_a_docx=True)
+    individual_wind_turbine_outliers_outlier_detector('load',
+                                                      wt_index=tuple(range(1)),
+                                                      write_to_a_docx=False)
     # wind_turbine_level_outlier_results_demo()
 
     # %% WF-level operating regime analyser and plot
@@ -952,7 +952,7 @@ if __name__ == '__main__':
     # fit_or_analyse_darly_wind_farm_power_curve_model_with_known_wind_turbines(task='time series check')
 
     # %% WF-level PC model study (WITHOUT known wind turbines)
-    fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit')
+    # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='fit')
     # fit_or_analyse_darly_wind_farm_power_curve_model_without_known_wind_turbines(task='time series check')
 
     # fit_or_analyse_zelengrad_wind_farm_power_curve_model(task='fit')

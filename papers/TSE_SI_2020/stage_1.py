@@ -1,5 +1,6 @@
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from Ploting.fast_plot_Func import *
 from project_utils import *
 from prepare_datasets import WF_RATED_POUT_MAPPER, NUMBER_OF_WT_MAPPER, CLUSTER_TO_WF_MAPPER, WF_TO_CLUSTER_MAPPER, \
@@ -36,6 +37,7 @@ from scipy import stats
 from UnivariateAnalysis_Class import ECDF, UnivariatePDFOrCDFLike
 import json
 from scipy.stats import pearsonr, spearmanr, kendalltau
+from scipy.io.matlab import savemat, loadmat
 
 setlocale(LC_ALL, "en_US")
 sns.set()
@@ -349,11 +351,17 @@ def train_nn_model(geo_loc: str, res_name, *, use_corr_impute: str, continue_tra
 
 
 def test_nn_model(geo_loc: str, res_name: str, ensemble_size: int = 3000, *,
-                  use_corr_impute: str):
+                  use_corr_impute: str, use_training_set: bool = False):
+    if use_training_set:
+        assert ensemble_size == 1
     # Get data
-    test_data_set, test_data_windowed = get_natural_resources_or_opr_or_copula_data(geo_loc, "test", False,
-                                                                                    res_name=res_name,
-                                                                                    use_corr_impute=use_corr_impute)
+    test_data_set, test_data_windowed = get_natural_resources_or_opr_or_copula_data(
+        geo_loc,
+        "training" if use_training_set else "test",
+        False,
+        res_name=res_name,
+        use_corr_impute=use_corr_impute
+    )
 
     # Build and get model
     tester = get_nn_model(input_shape=test_data_windowed[0].element_spec[0].shape[1:],
@@ -411,7 +419,14 @@ def test_nn_model(geo_loc: str, res_name: str, ensemble_size: int = 3000, *,
     # Save
     save_path = NN_MODEL_PREDICTION_PATH / fr"{geo_loc}/{res_name}{use_corr_impute}"
     try_to_find_folder_path_otherwise_make_one(save_path)
-    save_pkl_file(save_path / "test_set_predictions.pkl",
+    for j in range(2):
+        error = test_samples_y_inv[:, 0, j] - prediction_results_inv[0, :, 0, j]
+        if j == 0:
+            savemat(save_path / "training_set_ws_err.mat", {"error": error})
+        else:
+            savemat(save_path / "training_set_ad_err.mat", {"error": error})
+
+    save_pkl_file(save_path / "training_set_predictions.pkl" if use_training_set else "test_set_predictions.pkl",
                   {
                       "test_samples_y_inv": test_samples_y_inv,
                       "prediction_results_inv": prediction_results_inv
@@ -680,7 +695,7 @@ if __name__ == "__main__":
 
     pass
     # get_natural_resources_or_opr_or_copula_data('Katuni', 'training', use_corr_impute='', res_name='EveryThing')
-    # test_nn_model('Glunca', 'EveryThing', ensemble_size=3000, use_corr_impute='_cluster_')
+    test_nn_model('Katuni', 'EveryThing', ensemble_size=1, use_corr_impute='_cluster_', use_training_set=True)
     # for final_name in AVAILABLE_WF_NAMES:
     #     # plot_natural_resources_results(final_name, '')
     #     # plot_natural_resources_results(final_name, '_cluster_')
@@ -690,8 +705,8 @@ if __name__ == "__main__":
     # plot_natural_resources_results('Bruska', '')
     # plot_natural_resources_results('Bruska', '_cluster_')
     # cal_natural_resources_errors('Bruska')
-    print(cal_opr_errors('Bruska'))
-    print(cal_opr_errors('Jelinak'))
+    # print(cal_opr_errors('Bruska'))
+    # print(cal_opr_errors('Jelinak'))
     # cal_natural_resources_errors('Lukovac')
     # plot_opr_results('Jelinak')
     # print(cal_opr_errors('Jelinak'))
