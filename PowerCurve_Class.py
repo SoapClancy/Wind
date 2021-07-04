@@ -208,7 +208,8 @@ class PowerCurveByMfr(PowerCurve):
             high_resol_wind,
             mode: str = 'cross sectional',
             return_percentiles: UncertaintyDataFrame = None,
-            discard_prev_num: int = 600
+            discard_prev_seconds: int = 600,
+            resol: int = 3
     ) -> Union[ndarray, pd.DataFrame]:
         """
         TO calculate the Pout considering hysteresis and restart wind speed
@@ -224,8 +225,8 @@ class PowerCurveByMfr(PowerCurve):
         :param return_percentiles: type UncertaintyDataFrame
         If specified, then return to a UncertaintyDataFrame instance, whose index is determined by return_percentiles
 
-        :param discard_prev_num
-
+        :param discard_prev_seconds
+        :param resol
         :return: simulated distribution of Pout
         for ndarray:
         axis 0 is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
@@ -234,7 +235,7 @@ class PowerCurveByMfr(PowerCurve):
         index is return_percentiles,
         column is the No. (i.e., the index, or corresponding position) of wind speed or wind_speed_std
         """
-        assert discard_prev_num in {60, 600}
+        discard_prev_num = discard_prev_seconds // resol
         # To prevent change in the existing return_percentiles
         return_percentiles = copy.deepcopy(return_percentiles)
         # Numba type should be determined so it can compile. Dynamic is not allowed
@@ -244,45 +245,45 @@ class PowerCurveByMfr(PowerCurve):
         numba_var_restart_wind_speed = self.restart_wind_speed
 
         def hpc_with_hysteresis_control_using_high_resol_wind(x, control_signal_input):
-            y = np.full((x.shape[0], (x.shape[1] - discard_prev_num) // 3), 0.)
-            for i in range(discard_prev_num + 1, x.shape[1], 3):
-                long_term_mean = np.mean(x[:, i - 1 - discard_prev_num:i], axis=1)
+            y = np.full((x.shape[0], x.shape[1] - discard_prev_num), 0.)
+            for i in range(discard_prev_num, x.shape[1]):
+                long_term_mean = np.mean(x[:, i - discard_prev_num:i], axis=1)
                 # past_600s_ws_mean = np.mean(x[:, i - 1 - 600:i], axis=1)
                 # past_60s_ws_mean = np.mean(x[:, i - 1 - 60:i], axis=1)
                 # past_10s_ws_mean = np.mean(x[:, i - 1 - 10:i], axis=1)
-                past_3s_ws_mean = np.mean(x[:, i - 1 - 3:i], axis=1)
-                past_3s_ws_min = np.min(x[:, i - 1 - 3:i], axis=1)
-                past_3s_ws_max = np.max(x[:, i - 1 - 3:i], axis=1)
+                past_3s = x[:, i - 1]
+                # past_3s_ws_mean = np.mean(x[:, i - 3:i], axis=1)
+                # past_3s_ws_min = np.min(x[:, i - 3:i], axis=1)
+                # past_3s_ws_max = np.max(x[:, i - 3:i], axis=1)
 
-                j = (i - discard_prev_num - 1) // 3
-                y[:, j] = np.interp(past_3s_ws_mean, numba_var_mfr_ws, numba_var_mfr_p)
+                j = i - discard_prev_num
+                y[:, j] = np.interp(x[:, i], numba_var_mfr_ws, numba_var_mfr_p)
                 if j == 0:
-                    initial_mask = np.bitwise_or(past_3s_ws_mean < numba_var_cut_in_wind_speed,
-                                                 past_3s_ws_mean >= numba_var_cut_out_wind_speed)
+                    initial_mask = np.bitwise_or(past_3s < numba_var_cut_in_wind_speed,
+                                                 past_3s >= numba_var_cut_out_wind_speed)
                     control_signal_input[initial_mask, j:] = True
                 else:
                     # # Cut-in trigger
-                    cut_in_bool = np.all((past_3s_ws_mean < 10.,
+                    cut_in_bool = np.all((past_3s < 10.,
                                           control_signal_input[:, j - 1],
-                                          np.bitwise_or(past_3s_ws_min >= 5.,
+                                          np.bitwise_or(past_3s >= 5.,
                                                         long_term_mean >= 4.)), axis=0)
                     control_signal_input[cut_in_bool, j:] = False
                     # Cut-in back trigger
-                    cut_in_back_bool = np.all((past_3s_ws_mean < 10.,
+                    cut_in_back_bool = np.all((past_3s < 10.,
                                                ~control_signal_input[:, j - 1],
                                                long_term_mean < 3.), axis=0)
                     control_signal_input[cut_in_back_bool, j:] = True
                     # Cut-out trigger
-                    cut_out_bool = np.all((past_3s_ws_mean >= 10.,
+                    cut_out_bool = np.all((past_3s >= 10.,
                                            ~control_signal_input[:, j - 1],
-                                           np.bitwise_or(past_3s_ws_min >= 30.,
+                                           np.bitwise_or(past_3s >= 30.,
                                                          long_term_mean >= 25.)), axis=0)
                     control_signal_input[cut_out_bool, j:] = True
                     # Restart trigger
-                    restart_bool = np.all((past_3s_ws_mean >= 10.,
+                    restart_bool = np.all((past_3s >= 10.,
                                            control_signal_input[:, j - 1],
-                                           np.bitwise_or(past_3s_ws_max < 16.,
-                                                         long_term_mean < 20.)), axis=0)
+                                           long_term_mean < 20.), axis=0)
                     control_signal_input[restart_bool, j:] = False
 
                 # apply control
@@ -298,8 +299,9 @@ class PowerCurveByMfr(PowerCurve):
         for this_high_resol_wind_index, this_high_resol_wind in enumerate(high_resol_wind):
             # Initialise the hysteresis_control_signal
             if (this_high_resol_wind_index == 0) or (mode == 'cross sectional'):
-                hysteresis_control_signal = np.full((this_high_resol_wind.shape[0],
-                                                     (this_high_resol_wind.shape[1] - discard_prev_num) // 3), False)
+                hysteresis_control_signal = np.full(
+                    (this_high_resol_wind.shape[0], this_high_resol_wind.shape[1] - discard_prev_num), False
+                )
             elif mode == 'time series':
                 # Only use the last control signals as init
                 hysteresis_control_signal = np.repeat(hysteresis_control_signal[:, [-1]],

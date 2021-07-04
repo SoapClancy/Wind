@@ -507,8 +507,8 @@ def individual_wind_turbine_outliers_outlier_detector(power_curve_model_task: st
                 fitted_pc_obj.plot(plot_recording=False, ax=ax, label="6P-PC")
 
             this_wt.outlier_plot()
-            # this_wt.outlier_plot(plot_individual=True)
-            # this_wt.outlier_report()
+            this_wt.outlier_plot(plot_individual=True)
+            this_wt.outlier_report()
 
             # %% Calculate error
             ws = np.arange(0, 28.5 + BIN_WIDTH, BIN_WIDTH)
@@ -525,8 +525,9 @@ def individual_wind_turbine_outliers_outlier_detector(power_curve_model_task: st
             #                                               mfr_kwargs=MFR_KWARGS, plot_scatter_pc=True,
             #                                               save_to_buffer=True)
             ax = this_wt[outlier('normal')].plot(plot_mfr=MFR_PC_LIMIT, mfr_mode='discrete', mfr_kwargs=MFR_KWARGS,
-                                                 plot_scatter_pc=True)
-            ax_3_normal = fitted_pc_obj.plot(plot_recording=False, ax=ax, label="6P-PC", save_to_buffer=True)
+                                                 plot_scatter_pc=True, save_to_buffer=True)
+            # ax_3_normal = fitted_pc_obj.plot(plot_recording=False, ax=ax, label="6P-PC", save_to_buffer=True)
+            ax_3_normal = ax
 
             ax_4_report, ax_5_report = this_wt.outlier_report(save_to_buffer=True)
             document.add_heading(this_wt.__str__().replace("Darly", "Dalry"), level=1)
@@ -940,12 +941,12 @@ if __name__ == '__main__':
     # cat_6_demo_time_series()
     # migrate_from_old_wind_turbine_outlier_detection()
     individual_wind_turbine_outliers_outlier_detector('load',
-                                                      wt_index=tuple(range(1)),
-                                                      write_to_a_docx=False)
+                                                      wt_index=tuple(range(6)),
+                                                      write_to_a_docx=True)
     # wind_turbine_level_outlier_results_demo()
 
     # %% WF-level operating regime analyser and plot
-    # darly_wind_farm_operating_regime()
+    darly_wind_farm_operating_regime()
     # dalry_wind_farm_with_weather()
 
     # %% WF-level PC model study (with known wind turbines)

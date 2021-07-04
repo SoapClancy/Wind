@@ -8,7 +8,7 @@ from prepare_datasets import load_raw_wt_from_txt_file_and_temperature_from_csv,
 from BivariateAnalysis_Class import MethodOfBins
 from Ploting.fast_plot_Func import *
 from Wind_Class import Wind
-from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks
+from Ploting.adjust_Func import reassign_linestyles_recursively_in_ax, adjust_lim_label_ticks, adjust_legend_in_ax
 from ConvenientDataType import IntFloatConstructedOneDimensionNdarray, IntOneDimensionNdarray
 from File_Management.load_save_Func import *
 from project_utils import *
@@ -32,6 +32,8 @@ from tqdm import tqdm
 import copy
 import matplotlib.pyplot as plt
 from WT_WF_Class import WT
+from Ploting.adjust_Func import LINESTYLE_STR, LINESTYLE_TUPLE
+from sklearn.linear_model import LinearRegression
 
 BY_SIGMA = 1.5
 
@@ -76,15 +78,31 @@ def init_setup(wind_turbine_index: int = 1):
     #        x_label="Wind Speed Bin [m/s]", y_label="Average Wind Speed Std. [m/s]",
     #        save_format='svg', save_file_=f"WT{wind_turbine_index + 1}")
     WIND_SPEED_STD_UCT = MOB.cal_mob_statistic_eg_quantile(np.arange(0, 1.001, 0.001), behaviour='new')
-    SIMULATION_RESOLUTION = 1
+    SIMULATION_RESOLUTION = 3
     SIMULATION_TRACES = 100_000
     SIMULATION_RETURN_PERCENTILES = covert_to_str_one_dimensional_ndarray(np.arange(0, 100.001, 0.001), '0.001')
 
     del wind_turbines, wind_speed, wind_speed_std
 
 
-# for i in range(6):
 init_setup(-1)
+ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE,
+            label='All WTs',
+            x_label="Wind Speed Bin [m/s]", y_label="Average Wind Speed Std. [m/s]")
+lr_obj = LinearRegression().fit(WIND_SPEED_RANGE.reshape(-1, 1), WIND_SPEED_STD_RANGE)
+# ax = series(WIND_SPEED_RANGE, lr_obj.predict(WIND_SPEED_RANGE.reshape(-1, 1)), ax=ax,
+#             label='All WTs (fit)')
+tt = 1
+for i in range(6):
+    init_setup(i)
+    ax = series(WIND_SPEED_RANGE, WIND_SPEED_STD_RANGE, ax=ax,
+                label=f'WT{i + 1}')
+    lr_obj = LinearRegression().fit(WIND_SPEED_RANGE.reshape(-1, 1), WIND_SPEED_STD_RANGE)
+    # ax = series(WIND_SPEED_RANGE, lr_obj.predict(WIND_SPEED_RANGE.reshape(-1, 1)), ax=ax,
+    #             label=f'WT{i+1} (fit)')
+reassign_linestyles_recursively_in_ax(ax, False)
+adjust_legend_in_ax(ax, protocol='Outside center right')
+
 FIXED_MFR_PC = globals()['FIXED_MFR_PC']
 THIS_WIND_TURBINE = globals()['THIS_WIND_TURBINE']  # type: WT
 MOB = globals()['MOB']
@@ -480,7 +498,7 @@ def demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(_this_p
             this_simulated_pout = this_pc.cal_with_hysteresis_control_using_high_resol_wind(
                 high_resol_wind,
                 return_percentiles=template,
-                discard_prev_num=original_resolution - 600
+                discard_prev_seconds=original_resolution - 600
             )
             this_simulated_pout = this_simulated_pout.rename(columns={0: str(this_ws)})
             _simulated_pout.append(this_simulated_pout)
@@ -695,9 +713,9 @@ if __name__ == "__main__":
     # cc = sasa_combine_upper_and_lower()
     # sasa_using_fitted_pc_to_simulate()
     # demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.12", "mean"), name='')
-    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("0.97", "mean"), name='')
-    demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.27", "mean"), name='')
-    sasa_combine_upper_and_lower(plot=True)
+    # demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("0.97", "mean"), name='')
+    # demonstration_possible_pout_range_in_wind_speed_bins_my_proposal_new(("1.27", "mean"), name='')
+    # sasa_combine_upper_and_lower(plot=True)
     # for ad in ("0.97", "1.27"):
     #     for j in range(6):
     #         init_setup(j)

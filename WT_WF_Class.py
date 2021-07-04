@@ -242,7 +242,8 @@ class WT(WTandWFBase):
         # %% Others(2) and sim
         from Wind_Class import Wind
         # Get a Callable that can calculates the 10s to 10s wind speed variation sigma
-        sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol()  # type: Callable
+        simulation_resolution = 3
+        sigma_func = Wind.learn_transition_by_looking_at_actual_high_resol(simulation_resolution)  # type: Callable
         # The follows is the key contribution, which is the implementation of the proposed simulation
         try_to_find_folder_path_otherwise_make_one(prior_sim_knowledge_path.parent)
         prior_sim_knowledge = load_pkl_file(prior_sim_knowledge_path)  # type:Union[pd.DataFrame, None]
@@ -274,6 +275,7 @@ class WT(WTandWFBase):
         mfr_pc_obj = PowerCurveByMfr(mfr_pc_densities[0])
         any_update_flag = False
         self.update_air_density_to_last_column()
+        original_resolution = 660
         print(f"Total rows to check = {self[others_2_mask].shape[0]}")
         for i, this_recording in tqdm(enumerate(self[others_2_mask].iterrows())):
             this_recording_index = this_recording[0]
@@ -309,16 +311,18 @@ class WT(WTandWFBase):
                 )
                 # Secondly, simulate (using mfr_pc_densities[0])
                 # prepare high resolution wind, using medium point of WS bin and WS std. bin
-                wind = Wind(this_recording_ws_bin[1], this_recording_ws_std_bin[1])
+                wind = Wind(this_recording_ws_bin[1], this_recording_ws_std_bin[1],
+                            original_resolution=original_resolution)
                 high_resol_wind = wind.simulate_transient_wind_speed_time_series(
-                    resolution=1,
+                    resolution=simulation_resolution,
                     traces_number_for_each_recording=100_000,
                     sigma_func=sigma_func
                 )
                 # prepare mfr pc
                 this_pout_uncertainty = mfr_pc_obj.cal_with_hysteresis_control_using_high_resol_wind(
                     high_resol_wind,
-                    return_percentiles=uncertainty_data_frame_template_obj
+                    return_percentiles=uncertainty_data_frame_template_obj,
+                    discard_prev_seconds=original_resolution - 600
                 )
                 # Finally, update the value,
                 current_sim_knowledge.iloc[0] = this_pout_uncertainty.values.flatten()
